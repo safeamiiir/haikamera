@@ -125,6 +125,14 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
 
 It's a single stateless Node process plus static files, and the key stays server-side — so any host that runs Node works (Fly, Render, Railway, a VPS, even a Raspberry Pi on your LAN). Put it behind HTTPS and add it to your home screen. Rotate a key if a deploy ever leaks it.
 
+**Render, with continuous deployment.** This repo ships a GitHub Actions workflow at `.github/workflows/deploy.yml` that publishes a new version to Render whenever `main` moves (i.e. when a pull request merges), and it works with the manual **Run workflow** button too. To wire it up:
+
+1. Render → your service → **Settings → Deploy Hook** → copy the URL.
+2. GitHub → repo **Settings → Secrets and variables → Actions → New repository secret** → name it `RENDER_DEPLOY_HOOK_URL` and paste the URL.
+3. Render → the same service → **Settings → Build & Deploy → Auto-Deploy: No**. While Auto-Deploy is on, Render already redeploys on every push, so each merge would deploy twice; turning it off makes the workflow the single deploy path.
+
+On Render the service is a Node web service: build `npm install`, start `node server.js`, and you can point the health check at `/api/health`. Add `AI_API_KEY` (and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
+
 ### If the page throws an error after an update
 
 You're almost certainly running a **stale cached `app.js`** against newer HTML (the classic symptom is `Cannot set properties of null`). The server serves the app shell with `Cache-Control: no-cache` and the service worker is network-first, so this should not happen — but if you updated while an old version was already cached, do one clean reload:
@@ -149,6 +157,7 @@ public/
   sw.js                   Offline app shell (writing still needs a connection)
   icon.svg                App icon
 .env.example              Vision-model config, with a table of free options
+.github/workflows/deploy.yml  Publish to Render on every push to main
 ```
 
 ---

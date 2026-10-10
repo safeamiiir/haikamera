@@ -1,0 +1,76 @@
+name: Deploy to Render
+
+# Publishes a new version to Render whenever main moves — i.e. when a pull
+# request merges — plus a manual "Run workflow" button in the Actions tab.
+#
+# One-time setup
+#   1. Render → your service → Settings → Deploy Hook → copy the URL.
+#   2. GitHub → repo Settings → Secrets and variables → Actions → New secret
+#        RENDER_DEPLOY_HOOK_URL = <the deploy hook URL>
+#   3. Render → the same service → Settings → Build & Deploy → Auto-Deploy: "No".
+#      While Auto-Deploy is on, Render already redeploys on every push, so each
+#      merge would deploy twice. Turning it off makes this workflow the single
+#      deploy path.
+#
+# The deploy hook URL is a credential — keep it in the secret, never in the repo.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two production deploys at once; queue rather than cancel.
+concurrency:
+  group: render-deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish to Render
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax-check the app
+        run: |
+          node --check server.js
+          node --check public/app.js
+          node --check public/sw.js
+          echo "All JavaScript parses."
+
+      - name: Trigger the Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error title=Missing secret::Set RENDER_DEPLOY_HOOK_URL (Render → service → Settings → Deploy Hook)."
+            exit 1
+          fi
+          echo "Requesting a deploy of ${GITHUB_SHA:0:7}…"
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo
+          echo "Deploy requested. Watch it at https://dashboard.render.com/web/srv-db582lvavr4c73fpjvag"
+
+      - name: Wait for the site to answer (best effort)
+        continue-on-error: true
+        run: |
+          url="https://haikamera.onrender.com/api/health"
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "haikamera is answering."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::haikamera did not return 200 in ~4 minutes (a free instance can be slow to wake)."
