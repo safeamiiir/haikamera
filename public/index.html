@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Haikamera — a tiny poem about your scene</title>
+  <meta name="description" content="Point your phone at anything and a free, open-weight AI writes a short colour-poem about what it sees. No app, no login, no data collection." />
+  <meta name="theme-color" content="#123a24" />
+  <meta name="color-scheme" content="light dark" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app" id="app">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <span class="brand">
+        <span class="brand-mark" aria-hidden="true">🪷📸</span>
+        Haikamera
+      </span>
+      <button class="ghost-btn" id="journalBtn" type="button" aria-haspopup="dialog">
+        Journal <span class="count" id="journalCount">0</span>
+      </button>
+    </header>
+
+    <!-- Privacy line: one sentence, no fine print -->
+    <p class="privacy" id="privacyLine">
+      No account, no cookies, nothing about you. EXIF/GPS is stripped on your phone
+      before any upload.
+    </p>
+
+    <!-- Capture stage -->
+    <section class="stage" id="stage">
+      <div class="hint">
+        <h1>What do you <em>see</em>?</h1>
+        <p>Point at a scene — your desk, a window, a trail. I'll read its colours and
+           objects, and write you a tiny poem about it.</p>
+      </div>
+
+      <button class="shutter" id="startBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="captureMenu">
+        <span class="shutter-ring" aria-hidden="true"></span>
+        <span class="shutter-label">Snap a poem</span>
+      </button>
+
+      <!-- Chooser: ALWAYS shown when you tap "Snap a poem" -->
+      <div class="capture-sheet hidden" id="captureMenu" role="dialog" aria-modal="true" aria-label="Add a photo">
+        <div class="capture-sheet-card">
+          <h2 class="capture-sheet-title">Add a photo</h2>
+          <p class="capture-sheet-sub">Take a new one, or choose one you already have.</p>
+          <button class="capture-option" id="takePhotoBtn" type="button">
+            <span class="capture-icon" aria-hidden="true">📷</span>
+            <span class="capture-text">
+              <strong>Take a photo</strong>
+              <small>Open the camera</small>
+            </span>
+          </button>
+          <button class="capture-option" id="uploadBtn" type="button">
+            <span class="capture-icon" aria-hidden="true">🖼️</span>
+            <span class="capture-text">
+              <strong>Upload an image</strong>
+              <small>Choose from your device</small>
+            </span>
+          </button>
+          <button class="ghost-btn" id="cancelCapture" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+      <input id="uploadInput" type="file" accept="image/*" hidden />
+
+      <p class="sub-hint">Snap a scene or upload one — you'll get a short poem about its colours and objects. Then go look at the real thing.</p>
+    </section>
+
+    <!-- Live camera: desktops open the webcam here. On a Mac we auto-prefer
+         the iPhone via Continuity Camera, if one is available. -->
+    <section class="camera-view hidden" id="cameraView" aria-live="polite">
+      <div class="camera-frame">
+        <video id="cameraVideo" autoplay playsinline muted></video>
+      </div>
+      <div class="camera-meta">
+        <select id="cameraSelect" class="camera-select hidden" aria-label="Choose a camera"></select>
+        <p class="camera-hint hidden" id="cameraHint"></p>
+      </div>
+      <div class="camera-controls">
+        <button class="ghost-btn" id="cancelCamera" type="button">Cancel</button>
+        <button class="capture-btn" id="captureFrame" type="button" aria-label="Capture photo">
+          <span class="shutter-ring" aria-hidden="true"></span>
+          <span class="shutter-label">Capture</span>
+        </button>
+        <button class="ghost-btn camera-switch hidden" id="switchCamera" type="button" aria-label="Switch camera" title="Switch camera">⇄</button>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <section class="loading hidden" id="loading" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="loadingText">Haikoizing…</p>
+      <img class="preview" id="previewImg" alt="Your captured photo" />
+    </section>
+
+    <!-- Result -->
+    <section class="result hidden" id="result" aria-live="polite">
+
+      <!-- Your own photo — we never invent or fetch another image -->
+      <figure class="scene-photo">
+        <img id="sceneImg" alt="The scene you photographed" />
+      </figure>
+
+      <div class="card poem-card">
+        <p class="poem-title" id="poemTitle"></p>
+        <div class="poem" id="poemLines"></div>
+
+        <!-- The extra info, tucked away but clearly labelled -->
+        <details class="how" id="howDetails">
+          <summary class="how-summary">
+            <span class="how-summary-text">See how this was made</span>
+            <span class="how-badge hidden" id="howBadge"></span>
+            <span class="how-chevron" aria-hidden="true">⌄</span>
+          </summary>
+
+          <div class="how-body">
+            <dl class="how-meta">
+              <div class="how-row hidden" id="moodRow">
+                <dt>Mood</dt>
+                <dd id="resMood"></dd>
+              </div>
+              <div class="how-row hidden" id="makerRow">
+                <dt>Made by</dt>
+                <dd id="resSource"></dd>
+              </div>
+            </dl>
+
+            <div class="how-block hidden" id="colorsBlock">
+              <p class="how-label">Colours it saw</p>
+              <div class="swatches" id="colorSwatches" aria-label="Colours found in the scene"></div>
+            </div>
+
+            <div class="how-block hidden" id="objectsBlock">
+              <p class="how-label">Things it saw</p>
+              <ul class="object-chips" id="objectChips" aria-label="Objects found in the scene"></ul>
+            </div>
+          </div>
+        </details>
+
+        <div class="result-actions">
+          <button class="primary-btn" id="againBtn" type="button">Another scene</button>
+          <button class="ghost-btn" id="saveBtn" type="button">Save to journal</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Error -->
+    <section class="error hidden" id="errorBox" aria-live="assertive">
+      <p id="errorText">Something went wrong.</p>
+      <button class="primary-btn" id="retryBtn" type="button">Try again</button>
+    </section>
+
+    <!-- Offline notice -->
+    <p class="offline-banner hidden" id="offlineBanner">You're offline — writing needs a connection.</p>
+
+    <footer class="foot">
+      <span>Your own photo, plus a tiny poem about it. A free, <strong>open-weight</strong> vision model does the looking. Swap the model with one env var.</span>
+    </footer>
+  </main>
+
+  <!-- Journal dialog -->
+  <dialog class="journal" id="journalDialog">
+    <div class="journal-head">
+      <h3>Field journal</h3>
+      <button class="ghost-btn" id="closeJournal" type="button" aria-label="Close">✕</button>
+    </div>
+    <p class="journal-note">Stored only in this browser on your device. Never uploaded, never synced. Clear it any time.</p>
+    <ul class="journal-list" id="journalList"></ul>
+    <div class="journal-actions">
+      <button class="ghost-btn danger" id="clearJournal" type="button">Clear journal</button>
+    </div>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      // updateViaCache: 'none' keeps sw.js itself from being HTTP-cached, so a
+      // new version is picked up immediately.
+      window.addEventListener('load', () =>
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {})
+      );
+      // When an updated service worker takes over, reload once so the page runs
+      // matching HTML + JS (avoids running a stale app.js against new markup).
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || reloading) return;
+        reloading = true;
+        window.location.reload();
+      });
+    }
+  </script>
+</body>
+</html>

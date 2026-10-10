@@ -1,0 +1,19 @@
+{
+  "name": "Haikamera",
+  "short_name": "Haikamera",
+  "description": "Point your phone at anything and a free, open-weight AI writes a short colour-poem about what it sees. No app, no login, no data collection.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4efe4",
+  "theme_color": "#123a24",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

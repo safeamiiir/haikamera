@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Haikamera">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f7a4d"/>
+      <stop offset="1" stop-color="#123a24"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <path d="M256 402V232" stroke="#eaf3ea" stroke-width="20" stroke-linecap="round"/>
+  <path d="M256 300c-70 0-116-40-116-116 76 0 116 44 116 116z" fill="#7fd39f"/>
+  <path d="M256 250c0-72 46-116 116-116 0 76-40 116-116 116z" fill="#a7e6bd"/>
+  <circle cx="256" cy="402" r="14" fill="#eaf3ea"/>
+</svg>
