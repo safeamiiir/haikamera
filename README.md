@@ -123,6 +123,8 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
 
 ### Deploy
 
+**Live:** <https://haikamera.onrender.com>.
+
 It's a single stateless Node process plus static files, and the key stays server-side — so any host that runs Node works (Fly, Render, Railway, a VPS, even a Raspberry Pi on your LAN). Put it behind HTTPS and add it to your home screen. Rotate a key if a deploy ever leaks it.
 
 **On Render.** It runs as a Node web service: build `npm install`, start `node server.js`, health check `/api/health`. Add `AI_API_KEY` (and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
