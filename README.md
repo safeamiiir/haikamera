@@ -125,13 +125,13 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
 
 It's a single stateless Node process plus static files, and the key stays server-side — so any host that runs Node works (Fly, Render, Railway, a VPS, even a Raspberry Pi on your LAN). Put it behind HTTPS and add it to your home screen. Rotate a key if a deploy ever leaks it.
 
-**Render, with continuous deployment.** This repo ships a GitHub Actions workflow at `.github/workflows/deploy.yml` that publishes a new version to Render whenever `main` moves (i.e. when a pull request merges), and it works with the manual **Run workflow** button too. To wire it up:
+**On Render.** It runs as a Node web service: build `npm install`, start `node server.js`, health check `/api/health`. Add `AI_API_KEY` (and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
 
-1. Render → your service → **Settings → Deploy Hook** → copy the URL.
-2. GitHub → repo **Settings → Secrets and variables → Actions → New repository secret** → name it `RENDER_DEPLOY_HOOK_URL` and paste the URL.
-3. Render → the same service → **Settings → Build & Deploy → Auto-Deploy: No**. While Auto-Deploy is on, Render already redeploys on every push, so each merge would deploy twice; turning it off makes the workflow the single deploy path.
+For it to redeploy on every merge to `main`, Render needs the repo connected through the **GitHub App**. A service created from a *public repo URL* can't auto-deploy and must be deployed by hand (<https://render.com/docs/deploys#automatic-deploys>), so connect the provider instead:
 
-On Render the service is a Node web service: build `npm install`, start `node server.js`, and you can point the health check at `/api/health`. Add `AI_API_KEY` (and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
+1. Render → **Account Settings → Account Security → Git Deployment Credentials → Add credential → GitHub**, and grant access to the `haikamera` repo (or install from <https://github.com/apps/render/installations/new> and tick the repo).
+2. Point the service at that connected repo — on the service's **Settings** page update the Git credentials/repository, or create the service fresh via **New → Web Service → GitHub**.
+3. Keep **Settings → Build & Deploy → Auto-Deploy: On Commit**. From then on, every merge to `main` deploys automatically (deploys show up on the service's **Deploys** page).
 
 ### If the page throws an error after an update
 
@@ -157,7 +157,6 @@ public/
   sw.js                   Offline app shell (writing still needs a connection)
   icon.svg                App icon
 .env.example              Vision-model config, with a table of free options
-.github/workflows/deploy.yml  Publish to Render on every push to main
 ```
 
 ---
