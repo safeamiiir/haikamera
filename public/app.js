@@ -631,7 +631,7 @@ fetch('/api/health')
   .then((h) => {
     if (h.demo) {
       els.privacyLine.textContent =
-        'Demo mode: no API key set, so you will get a sample poem. Add a free open-weight model key to go live — no account, no cookies, nothing about you.';
+        'Demo mode — here is a sample poem. No account, no cookies, nothing about you.';
     }
   })
   .catch(() => {});

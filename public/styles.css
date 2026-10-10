@@ -610,6 +610,14 @@ html, body {
   line-height: 1.5;
 }
 .foot strong { color: var(--green); }
+.foot p { margin: 0; }
+.foot p + p { margin-top: 6px; }
+.foot a {
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.foot a:hover { text-decoration: none; }
 
 /* ---- journal dialog ---- */
 .journal {

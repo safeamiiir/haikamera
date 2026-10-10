@@ -65,8 +65,9 @@ If a provider gets slow, changes its limits, or turns hostile, I point the confi
 2. Point at (or pick) any scene. Anything at all.
 3. The frame is downscaled to ≤1024px, re-encoded to JPEG on-device (EXIF/GPS gone), and POSTed to the local server proxy.
 4. An open-weight vision model reads the scene and returns strict JSON: a short title, a **three-line haiku (5-7-5 syllables)**, a mood, the **objects** it can see, and the dominant **colours** with hex codes.
-5. You get **your own photo**, the poem beneath it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal if you like.
-6. Then go look at the real thing.
+5. While it writes, the waiting line shows a **playful gerund** — *Haikoizing…*, *Shakespearing…*, *Poemising…* — drawn from a batch the AI invents on the fly (the server asks for fresh words and caches them; a built-in list covers the very first run).
+6. You get **your own photo**, the poem beneath it, and a **"See how this was made"** disclosure with the mood, the model that wrote it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal if you like.
+7. Then go look at the real thing.
 
 The model is prompted to ground every line in what is *actually visible* — real objects, real colours — to keep it calm and family-friendly, and to **never refuse**: if the photo is unclear it still answers, describing the colours and shapes it can honestly see. If JSON parsing ever fails, the server falls back to a guaranteed verse, quietly marked as a *best guess*.
 
@@ -138,7 +139,7 @@ The next load fetches fresh, matching files.
 ## Project layout
 
 ```
-server.js                 Zero-dependency server: static files, /api/poem, /api/health
+server.js                 Zero-dependency server: static files, /api/poem, /api/pulse, /api/health
 public/
   index.html              The whole UI (one screen, one button, one poem card)
   styles.css              Mobile-first, light/dark, safe-area aware

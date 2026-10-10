@@ -1,13 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Haikamera">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Haikamera — a camera that writes haiku">
+  <title>Haikamera</title>
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1f7a4d"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f5c39"/>
       <stop offset="1" stop-color="#123a24"/>
     </linearGradient>
+    <linearGradient id="iris" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2e7d52"/>
+      <stop offset="1" stop-color="#1f5c39"/>
+    </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
-  <path d="M256 402V232" stroke="#eaf3ea" stroke-width="20" stroke-linecap="round"/>
-  <path d="M256 300c-70 0-116-40-116-116 76 0 116 44 116 116z" fill="#7fd39f"/>
-  <path d="M256 250c0-72 46-116 116-116 0 76-40 116-116 116z" fill="#a7e6bd"/>
-  <circle cx="256" cy="402" r="14" fill="#eaf3ea"/>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- camera body -->
+  <rect x="104" y="176" width="304" height="208" rx="44" fill="#f4efe4"/>
+  <!-- viewfinder bump -->
+  <path d="M206 176v-14a26 26 0 0 1 26-26h48a26 26 0 0 1 26 26v14z" fill="#f4efe4"/>
+  <!-- shutter dot -->
+  <circle cx="352" cy="214" r="12" fill="#e2703a"/>
+
+  <!-- lens -->
+  <circle cx="256" cy="280" r="92" fill="#123a24"/>
+  <circle cx="256" cy="280" r="72" fill="url(#iris)"/>
+
+  <!-- haiku, three lines in 5-7-5 -->
+  <g fill="#f4efe4">
+    <rect x="235" y="248" width="42" height="12" rx="6"/>
+    <rect x="227" y="274" width="58" height="12" rx="6"/>
+    <rect x="235" y="300" width="42" height="12" rx="6"/>
+  </g>
 </svg>

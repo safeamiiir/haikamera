@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Haikamera — a tiny poem about your scene</title>
-  <meta name="description" content="Point your phone at anything and a free, open-weight AI writes a short colour-poem about what it sees. No app, no login, no data collection." />
+  <meta name="description" content="Point your phone at anything and get a tiny poem about it. No app, no login, no data collection." />
   <meta name="theme-color" content="#123a24" />
   <meta name="color-scheme" content="light dark" />
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -37,9 +37,8 @@
     <!-- Capture stage -->
     <section class="stage" id="stage">
       <div class="hint">
-        <h1>What do you <em>see</em>?</h1>
-        <p>Point at a scene — your desk, a window, a trail. I'll read its colours and
-           objects, and write you a tiny poem about it.</p>
+        <h1>Turn a scene into a <em>poem</em>.</h1>
+        <p>Point at anything — your desk, a window, a trail.</p>
       </div>
 
       <button class="shutter" id="startBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="captureMenu">
@@ -73,7 +72,7 @@
       <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
       <input id="uploadInput" type="file" accept="image/*" hidden />
 
-      <p class="sub-hint">Snap a scene or upload one — you'll get a short poem about its colours and objects. Then go look at the real thing.</p>
+      <p class="sub-hint">Snap one, then go look at the real thing.</p>
     </section>
 
     <!-- Live camera: desktops open the webcam here. On a Mac we auto-prefer
@@ -164,7 +163,16 @@
     <p class="offline-banner hidden" id="offlineBanner">You're offline — writing needs a connection.</p>
 
     <footer class="foot">
-      <span>Your own photo, plus a tiny poem about it. A free, <strong>open-weight</strong> vision model does the looking. Swap the model with one env var.</span>
+      <p>Your own photo, plus a tiny poem about it. A free, <strong>open-weight</strong> vision model does the looking.</p>
+      <p>
+        A fun project, built fully on
+        <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer">OpenCode</a>.
+        Made by <a href="https://safeamii.ir" target="_blank" rel="me noopener noreferrer">Amirreza</a>.
+      </p>
+      <p>
+        Not working? Email me at
+        <a href="mailto:safehiana@gmail.com?subject=Haikamera%20isn%27t%20working">safehiana@gmail.com</a>.
+      </p>
     </footer>
   </main>
 
