@@ -53,10 +53,35 @@ const els = {
   closeJournal: $('closeJournal'),
   offlineBanner: $('offlineBanner'),
   privacyLine: $('privacyLine'),
+  langSelect: $('langSelect'),
 };
 
 const JOURNAL_KEY = 'haikamera.journal.v1';
 const LEGACY_JOURNAL_KEY = 'touchgrass.journal.v4'; // pre-rename key, migrated once
+const LANG_KEY = 'haikamera.lang';
+
+// Languages the server can write a poem in, and which of them read
+// right-to-left. Only the poem flips direction — the rest of the UI is English
+// and stays LTR.
+const RTL_LANGS = new Set(['fa']);
+
+function getLang() {
+  try {
+    return localStorage.getItem(LANG_KEY) === 'fa' ? 'fa' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
+function setLang(lang) {
+  const next = lang === 'fa' ? 'fa' : 'en';
+  try {
+    localStorage.setItem(LANG_KEY, next);
+  } catch {
+    /* private mode — the choice just won't persist */
+  }
+  if (els.langSelect) els.langSelect.value = next;
+}
 
 // Three encodings come out of one captured frame:
 //   display — what you see on screen (and what the journal keeps)
@@ -390,7 +415,7 @@ async function identify({ display, payload, thumb }) {
     const res = await fetch('/api/poem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: payload }),
+      body: JSON.stringify({ image: payload, language: getLang() }),
     });
 
     if (!res.ok) {
@@ -433,6 +458,15 @@ function renderResult(r, photo) {
   lastResult = r;
 
   els.sceneImg.src = photo;
+
+  // The poem carries its own direction: a Persian poem reads right-to-left
+  // even though the page around it is English and LTR.
+  const rtl = RTL_LANGS.has(r.language);
+  els.poemTitle.dir = rtl ? 'rtl' : 'ltr';
+  els.poemTitle.lang = rtl ? 'fa' : '';
+  els.poemLines.dir = rtl ? 'rtl' : 'ltr';
+  els.poemLines.lang = rtl ? 'fa' : '';
+
   els.poemTitle.textContent = r.title || '';
 
   els.poemLines.innerHTML = '';
@@ -554,6 +588,7 @@ function addToJournal() {
     lines: lastResult.poem || [],
     mood: lastResult.mood,
     model: lastResult.model || '',
+    language: lastResult.language || getLang(),
     degraded: !!lastResult.degraded,
     demo: !!lastResult.demo,
     objects: lastResult.objects || [],
@@ -651,6 +686,11 @@ function journalItem(e) {
 
   const poem = document.createElement('div');
   poem.className = 'j-poem';
+  // A saved Persian poem keeps reading right-to-left.
+  if (RTL_LANGS.has(e.language)) {
+    poem.dir = 'rtl';
+    poem.lang = 'fa';
+  }
   lines.forEach((line) => {
     const p = document.createElement('p');
     p.className = 'poem-line';
@@ -772,6 +812,10 @@ els.againBtn.addEventListener('click', () => show('stage'));
 els.retryBtn.addEventListener('click', () => show('stage'));
 els.saveBtn.addEventListener('click', addToJournal);
 
+if (els.langSelect) {
+  els.langSelect.addEventListener('change', (e) => setLang(e.target.value));
+}
+
 els.journalBtn.addEventListener('click', () => {
   renderJournal();
   els.journalDialog.showModal();
@@ -792,6 +836,7 @@ window.addEventListener('offline', updateOnline);
 // ---- Boot ----------------------------------------------------------------
 updateJournalCount();
 updateOnline();
+setLang(getLang()); // restore the chosen poem language
 show('stage');
 refreshPulses(); // pull playful AI-made loading words
 
