@@ -562,10 +562,10 @@ function copyHex(swatch, label, color) {
   }
 }
 
-// ---- Share: the photo + the poem + the model, and nothing else -----------
-// The share card carries exactly three things — your photo, the poem it earned,
-// and the name of the model that wrote it. The colours, objects and mood stay
-// in the app. We draw it here on a canvas so it can travel as one image through
+// ---- Share: the photo, the poem, the model, and where to find the app -----
+// The share card carries the photo, the poem it earned, the name of the model
+// that wrote it, and the app's address. The colours, objects and mood stay in
+// the app. We draw it here on a canvas so it can travel as one image through
 // the Web Share API; where the browser can't share files, it downloads instead.
 
 const SHARE_WIDTH = 1080;      // px — a clean size for chat apps and feeds
@@ -575,6 +575,11 @@ const SHARE_INK = '#1b241d';
 const SHARE_SOFT = '#8a8a8a';
 const SHARE_GREEN = '#1f5c39';
 const SHARE_ACCENT = '#e2703a';
+
+// The public home of the app: printed on the card, and appended to the caption
+// so a shared poem always points back to where it came from.
+const APP_HOME = 'haikamera.onrender.com';
+const APP_HOME_URL = `https://${APP_HOME}`;
 
 let shareCardBlob = null;      // ready-to-share PNG, drawn after each result
 let shareCardPromise = null;
@@ -711,16 +716,22 @@ async function composeShareCard(r, photo) {
   }
   cursor += poemBlock;
 
-  // Footer: the model that wrote it, and the app that framed it. Model ids are
-  // Latin, so the footer stays LTR even under a Persian poem.
+  // Footer: the model that wrote it on the left, the app's address on the right.
+  // Model ids and URLs are Latin, so the footer stays LTR under a Persian poem.
   const maker = modelFull(r);
+  const siteText = `🪷 ${APP_HOME}`;
   const footerY = cursor + footerGap;
+
+  ctx.font = brandFont;
+  const siteW = ctx.measureText(siteText).width;
+
   ctx.direction = 'ltr';
   ctx.textAlign = 'left';
   ctx.font = modelFont;
   ctx.fillStyle = SHARE_GREEN;
   let makerText = maker ? `made by ${maker}` : 'Haikamera';
-  while (ctx.measureText(makerText).width > contentW - 220 && makerText.length > 12) {
+  // Never let the model name run into the site address.
+  while (ctx.measureText(makerText).width > contentW - siteW - 40 && makerText.length > 12) {
     makerText = makerText.slice(0, -2);
   }
   ctx.fillText(makerText, P, footerY);
@@ -728,7 +739,7 @@ async function composeShareCard(r, photo) {
   ctx.font = brandFont;
   ctx.fillStyle = SHARE_SOFT;
   ctx.textAlign = 'right';
-  ctx.fillText('🪷 Haikamera', W - P, footerY);
+  ctx.fillText(siteText, W - P, footerY);
 
   return canvasToBlob(canvas);
 }
@@ -742,7 +753,9 @@ function shareFilename(r) {
 function shareCaption(r) {
   const lines = [r.title, ...(r.poem || [])].filter(Boolean);
   const maker = modelFull(r);
-  return [lines.join('\n'), maker ? `— ${maker}` : '', 'Haikamera 🪷📸'].filter(Boolean).join('\n\n');
+  return [lines.join('\n'), maker ? `— ${maker}` : '', `Haikamera 🪷📸\n${APP_HOME_URL}`]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function resetShareCard(r, photo) {
