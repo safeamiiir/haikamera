@@ -55,8 +55,6 @@ public/sw.js              offline app shell
 .env.example              vision-model config with a table of free options
 ```
 
-There is a **Fork me on GitHub** ribbon in the corner, because the fastest way to understand an open project is to own a copy of it.
-
 ## How I Built It
 
 Two constraints shaped everything: the AI has to be open-weight, and the open parts have to be what make the app work, not decoration.
@@ -109,12 +107,6 @@ Three details made this more than a screenshot:
 
 A Persian poem stays right-to-left on the card, and the footer stays Latin, because a model id and a URL are Latin either way.
 
-### The result screen, and a field journal that stays on your phone
-
-The result is your photo, the poem, and a **"See how this was made"** disclosure. Open it and you get the model that wrote the verse, the **objects** it named as chips, and the dominant **colours** as tappable swatches — tap one to copy its hex. The colours are the one part of the result you can take somewhere else, which is rather the point: "the light was nice" becomes a hex you can actually use.
-
-The **field journal** is `localStorage` on your device and nowhere else, so there is no server copy to leak and nothing to sync. An entry keeps a thumbnail, the full poem, the language it was written in — a Persian poem reopens right-to-left — the model, the objects and the colours, and the date. Tapping one expands it, and clearing the whole thing is a single button. It is deliberately the opposite of a feed: a drawer, not a timeline.
-
 ### Rate limits are normal, so the server moves on
 
 Free `:free` model pools get 429'd constantly. The server walks a fallback chain, retries a model only when it answered with unparseable JSON instead of a transport error, and if everything fails it returns a guaranteed verse, honestly labelled a *fallback verse*. Every tap produces a poem.
@@ -142,7 +134,6 @@ The waiting screen shows gerunds like "Haikoizing…", "Shakespearing…", "Colo
 - Early drafts came back as prose wrapped in code fences, which broke `JSON.parse`. The fix was a tolerant extractor that slices from the first `{` to the last `}` and retries the same model when parsing fails.
 - Some models echoed the schema's placeholder title back verbatim. Now the normalizer drops known placeholders and substitutes a real name.
 - After a deploy, a cached `app.js` running against new HTML threw `Cannot set properties of null`. I serve the app shell with `Cache-Control: no-cache`, made the service worker network-first, and added a one-time reload when an updated service worker takes over.
-- An early version also asked the model for a one-word **mood** and showed it beside the model name. I cut it. The three lines already carry the feeling, and the extra field gave the model one more thing to invent and the schema one more key to get wrong.
 
 On the client, the interesting part is the privacy step: re-encode through a canvas (that re-encode is what drops EXIF and GPS), then POST a data URL. One captured frame becomes three encodings — a 1024px copy for the screen and the journal, a 512px copy (about 330 tokens) that is the only thing the model ever sees, and a 160px thumbnail for the journal list. On desktop it opens the webcam, and on a Mac with Continuity Camera it auto-selects your iPhone as the camera.
 
