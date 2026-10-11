@@ -484,12 +484,6 @@ function copyHex(swatch, label, color) {
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
-
 // ---- Local journal (this device only) ------------------------------------
 function loadJournal() {
   try {
@@ -543,19 +537,119 @@ function renderJournal() {
     return;
   }
 
-  entries.forEach((e) => {
-    const li = document.createElement('li');
-    const when = new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const firstLine = (e.lines && e.lines[0]) || '';
-    li.innerHTML = `
-      ${e.thumb ? `<img src="${e.thumb}" alt="">` : ''}
-      <div>
-        <p class="j-name">${escapeHtml(e.title || 'Untitled')}</p>
-        <p class="j-tagline">${escapeHtml(firstLine)}</p>
-        <p class="j-meta">${escapeHtml(e.mood || '')}${e.mood ? ' · ' : ''}${when}</p>
-      </div>`;
-    els.journalList.appendChild(li);
+  entries.forEach((e) => els.journalList.appendChild(journalItem(e)));
+}
+
+// One journal entry: a collapsed summary (thumbnail + title + first line) that
+// expands to the full poem, the colours it saw, and when it was saved.
+function journalItem(e) {
+  const when = new Date(e.at);
+  const lines = e.lines || [];
+  const colors = e.colors || [];
+
+  const li = document.createElement('li');
+
+  const details = document.createElement('details');
+  details.className = 'j-entry';
+
+  // ---- summary: always visible ----
+  const summary = document.createElement('summary');
+  summary.className = 'j-summary';
+
+  if (e.thumb) {
+    const img = document.createElement('img');
+    img.src = e.thumb;
+    img.alt = '';
+    summary.appendChild(img);
+  }
+
+  const head = document.createElement('div');
+  head.className = 'j-head';
+
+  const name = document.createElement('p');
+  name.className = 'j-name';
+  name.textContent = e.title || 'Untitled';
+
+  const tagline = document.createElement('p');
+  tagline.className = 'j-tagline';
+  tagline.textContent = lines[0] || '';
+  if (lines.length > 1) {
+    const more = document.createElement('span');
+    more.className = 'j-more';
+    more.textContent = ` +${lines.length - 1} more line${lines.length > 2 ? 's' : ''}`;
+    tagline.appendChild(more);
+  }
+
+  const meta = document.createElement('p');
+  meta.className = 'j-meta';
+  meta.textContent = [e.mood, when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })]
+    .filter(Boolean)
+    .join(' · ');
+
+  head.append(name, tagline, meta);
+  summary.appendChild(head);
+
+  const chevron = document.createElement('span');
+  chevron.className = 'j-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.textContent = '⌄';
+  summary.appendChild(chevron);
+
+  details.appendChild(summary);
+
+  // ---- body: revealed on expand ----
+  const body = document.createElement('div');
+  body.className = 'j-body';
+
+  const poem = document.createElement('div');
+  poem.className = 'j-poem';
+  lines.forEach((line) => {
+    const p = document.createElement('p');
+    p.className = 'poem-line';
+    p.textContent = line;
+    poem.appendChild(p);
   });
+  body.appendChild(poem);
+
+  if (colors.length) {
+    const label = document.createElement('p');
+    label.className = 'j-label';
+    label.textContent = 'Colours it saw';
+    body.appendChild(label);
+
+    const swatches = document.createElement('div');
+    swatches.className = 'swatches j-swatches';
+    colors.forEach((c) => {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'swatch';
+      swatch.title = `Copy ${c.hex}`;
+      swatch.setAttribute('aria-label', `${c.name} ${c.hex} — copy`);
+
+      const dot = document.createElement('span');
+      dot.className = 'swatch-dot';
+      dot.style.background = c.hex;
+
+      const swatchLabel = document.createElement('span');
+      swatchLabel.className = 'swatch-name';
+      swatchLabel.textContent = c.name;
+
+      swatch.append(dot, swatchLabel);
+      swatch.addEventListener('click', () => copyHex(swatch, swatchLabel, c));
+      swatches.appendChild(swatch);
+    });
+    body.appendChild(swatches);
+  }
+
+  const saved = document.createElement('p');
+  saved.className = 'j-when';
+  saved.textContent =
+    'Saved ' + when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  body.appendChild(saved);
+
+  details.appendChild(body);
+  li.appendChild(details);
+  return li;
 }
 
 // ---- Events --------------------------------------------------------------
