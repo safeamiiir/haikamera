@@ -557,8 +557,10 @@ html, body {
   .object-chips li { background: rgba(79, 174, 120, 0.14); }
 }
 
-.result-actions { display: flex; gap: 10px; margin-top: 18px; }
-.result-actions > * { flex: 1; }
+.result-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.result-actions > * { flex: 1 1 0; }
+/* "Another scene" leads on its own row; "Save" and "Share" sit side by side. */
+.result-actions > #againBtn { flex-basis: 100%; }
 
 /* ---- live camera (desktop / Mac webcam) ---- */
 .camera-view {
