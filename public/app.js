@@ -44,6 +44,7 @@ const els = {
   errorText: $('errorText'),
   againBtn: $('againBtn'),
   saveBtn: $('saveBtn'),
+  shareBtn: $('shareBtn'),
   retryBtn: $('retryBtn'),
   journalBtn: $('journalBtn'),
   journalCount: $('journalCount'),
@@ -147,6 +148,7 @@ function stopPulses() {
 
 let lastResult = null;
 let lastThumb = null;          // small data URL for the on-device journal
+let lastPhoto = null;          // the display data URL, for the share card
 
 // ---- Views ---------------------------------------------------------------
 function show(view) {
@@ -534,6 +536,12 @@ function renderResult(r, photo) {
   els.saveBtn.textContent = 'Save to journal';
   els.saveBtn.disabled = false;
 
+  // Draw the share card now, in the background, so tapping Share is instant and
+  // the tap stays a genuine user gesture (mobile browsers require one before
+  // they'll open the share sheet).
+  lastPhoto = photo;
+  resetShareCard(r, photo);
+
   show('result');
 }
 
@@ -552,6 +560,271 @@ function copyHex(swatch, label, color) {
   } else {
     done();
   }
+}
+
+// ---- Share: the photo + the poem + the model, and nothing else -----------
+// The share card carries exactly three things — your photo, the poem it earned,
+// and the name of the model that wrote it. The colours, objects and mood stay
+// in the app. We draw it here on a canvas so it can travel as one image through
+// the Web Share API; where the browser can't share files, it downloads instead.
+
+const SHARE_WIDTH = 1080;      // px — a clean size for chat apps and feeds
+const SHARE_PAD = 64;
+const SHARE_PAPER = '#fffdf8';
+const SHARE_INK = '#1b241d';
+const SHARE_SOFT = '#8a8a8a';
+const SHARE_GREEN = '#1f5c39';
+const SHARE_ACCENT = '#e2703a';
+
+let shareCardBlob = null;      // ready-to-share PNG, drawn after each result
+let shareCardPromise = null;
+
+// Canvas can't take a font stack with quotes in the same way CSS can, but a
+// plain comma list works. Persian needs an Arabic-script face, so keep the same
+// fallbacks the stylesheet uses.
+const SHARE_SERIF = 'Georgia, "Iowan Old Style", "Times New Roman", serif';
+const SHARE_SANS = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const SHARE_PERSIAN = '"Vazirmatn", "Noto Naskh Arabic", "Geeza Pro", Tahoma, serif';
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not read the photo.'));
+    img.src = src;
+  });
+}
+
+// Greedy word wrap against the measured width. Works for Persian too, since it
+// is still space-separated.
+function wrapText(ctx, text, maxWidth) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const lines = [];
+  let line = words[0];
+  for (let i = 1; i < words.length; i += 1) {
+    const test = `${line} ${words[i]}`;
+    if (ctx.measureText(test).width <= maxWidth) line = test;
+    else {
+      lines.push(line);
+      line = words[i];
+    }
+  }
+  lines.push(line);
+  return lines;
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('No image produced.'))), 'image/png');
+  });
+}
+
+// Compose the share card. Returns a Promise<Blob> (a PNG).
+async function composeShareCard(r, photo) {
+  const img = await loadImage(photo);
+  const W = SHARE_WIDTH;
+  const P = SHARE_PAD;
+  const contentW = W - P * 2;
+  const rtl = RTL_LANGS.has(r.language);
+
+  // Photo: full width, keeping its own shape, but never taller than 1.25× the
+  // width — a very tall portrait gets a gentle centre crop rather than a card
+  // that is mostly photo.
+  const ratio = img.naturalHeight / img.naturalWidth;
+  let photoH = Math.round(W * ratio);
+  let sy = 0;
+  let sh = img.naturalHeight;
+  const maxPhotoH = Math.round(W * 1.25);
+  if (photoH > maxPhotoH) {
+    photoH = maxPhotoH;
+    sh = Math.round(img.naturalWidth * (maxPhotoH / W));
+    sy = Math.round((img.naturalHeight - sh) / 2);
+  }
+
+  const titleFont = rtl ? `26px ${SHARE_PERSIAN}` : `600 25px ${SHARE_SANS}`;
+  const poemFont = rtl ? `50px ${SHARE_PERSIAN}` : `50px ${SHARE_SERIF}`;
+  const modelFont = `24px ${SHARE_SANS}`;
+  const brandFont = `600 24px ${SHARE_SANS}`;
+
+  // Measure first (on a scratch context) so the card's height fits its content.
+  const measure = document.createElement('canvas').getContext('2d');
+  measure.font = titleFont;
+  const title = (r.title || '').trim();
+  const titleLines = title ? wrapText(measure, rtl ? title : title.toUpperCase(), contentW) : [];
+
+  measure.font = poemFont;
+  const poemLines = [];
+  for (const line of (r.poem || []).slice(0, 3)) {
+    poemLines.push(...wrapText(measure, line, contentW));
+  }
+  if (!poemLines.length) poemLines.push('');
+
+  const titleLH = 40;
+  const poemLH = 76;
+  const topGap = 56;        // photo -> title
+  const titleGap = 30;      // title -> poem
+  const footerGap = 56;     // poem -> footer
+  const footerLH = 44;      // footer line height
+  const bottom = 56;
+
+  const titleBlock = titleLines.length * titleLH;
+  const poemBlock = poemLines.length * poemLH;
+  const H = photoH + topGap + titleBlock + (titleLines.length ? titleGap : 0) + poemBlock + footerGap + footerLH + bottom;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = SHARE_PAPER;
+  ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(img, 0, sy, img.naturalWidth, sh, 0, 0, W, photoH);
+
+  // A hairline in the app's green keeps the paper from floating.
+  ctx.fillStyle = SHARE_GREEN;
+  ctx.fillRect(0, photoH, W, 6);
+
+  ctx.textBaseline = 'alphabetic';
+  const anchorX = rtl ? W - P : P;
+  let cursor = photoH + topGap; // top edge of the text block
+
+  if (titleLines.length) {
+    ctx.font = titleFont;
+    ctx.fillStyle = SHARE_ACCENT;
+    ctx.direction = rtl ? 'rtl' : 'ltr';
+    ctx.textAlign = rtl ? 'right' : 'left';
+    if ('letterSpacing' in ctx) ctx.letterSpacing = rtl ? '0px' : '3px';
+    for (let i = 0; i < titleLines.length; i += 1) {
+      ctx.fillText(titleLines[i], anchorX, cursor + (i + 1) * titleLH - 12);
+    }
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+    cursor += titleBlock + titleGap;
+  }
+
+  ctx.font = poemFont;
+  ctx.fillStyle = SHARE_INK;
+  ctx.direction = rtl ? 'rtl' : 'ltr';
+  ctx.textAlign = rtl ? 'right' : 'left';
+  for (let i = 0; i < poemLines.length; i += 1) {
+    ctx.fillText(poemLines[i], anchorX, cursor + (i + 1) * poemLH - 16);
+  }
+  cursor += poemBlock;
+
+  // Footer: the model that wrote it, and the app that framed it. Model ids are
+  // Latin, so the footer stays LTR even under a Persian poem.
+  const maker = modelFull(r);
+  const footerY = cursor + footerGap;
+  ctx.direction = 'ltr';
+  ctx.textAlign = 'left';
+  ctx.font = modelFont;
+  ctx.fillStyle = SHARE_GREEN;
+  let makerText = maker ? `made by ${maker}` : 'Haikamera';
+  while (ctx.measureText(makerText).width > contentW - 220 && makerText.length > 12) {
+    makerText = makerText.slice(0, -2);
+  }
+  ctx.fillText(makerText, P, footerY);
+
+  ctx.font = brandFont;
+  ctx.fillStyle = SHARE_SOFT;
+  ctx.textAlign = 'right';
+  ctx.fillText('🪷 Haikamera', W - P, footerY);
+
+  return canvasToBlob(canvas);
+}
+
+function shareFilename(r) {
+  const slug = (r?.title || 'poem').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return `haikamera-${slug || 'poem'}.png`;
+}
+
+// The caption that travels with the image where the platform supports text.
+function shareCaption(r) {
+  const lines = [r.title, ...(r.poem || [])].filter(Boolean);
+  const maker = modelFull(r);
+  return [lines.join('\n'), maker ? `— ${maker}` : '', 'Haikamera 🪷📸'].filter(Boolean).join('\n\n');
+}
+
+function resetShareCard(r, photo) {
+  shareCardBlob = null;
+  shareCardPromise = composeShareCard(r, photo)
+    .then((blob) => {
+      shareCardBlob = blob;
+      return blob;
+    })
+    .catch(() => null);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// Ask the OS share sheet to take our file. Returns true when sharing either
+// happened or was deliberately cancelled; false means "no file sharing here",
+// so the caller should download instead.
+async function tryNativeShare(file, caption, title) {
+  if (!navigator.share || !file || !navigator.canShare?.({ files: [file] })) return false;
+  try {
+    await navigator.share({ files: [file], text: caption, title });
+    return true;
+  } catch (err) {
+    // The user dismissed the sheet — that's a finished action, not a failure.
+    if (err?.name === 'AbortError') return true;
+    return false;
+  }
+}
+
+function flashShareButton(text) {
+  const original = 'Share';
+  els.shareBtn.textContent = text;
+  els.shareBtn.disabled = true;
+  setTimeout(() => {
+    els.shareBtn.textContent = original;
+    els.shareBtn.disabled = false;
+  }, 1600);
+}
+
+async function shareResult() {
+  if (!lastResult || !lastPhoto) return;
+  const r = lastResult;
+  const caption = shareCaption(r);
+  const title = r.title || 'Haikamera';
+
+  // Fast path: the card is already drawn, so share it without awaiting anything
+  // — that keeps the tap a live user gesture when the share sheet opens.
+  if (shareCardBlob) {
+    const ready = new File([shareCardBlob], shareFilename(r), { type: 'image/png' });
+    if (await tryNativeShare(ready, caption, title)) return;
+    downloadBlob(shareCardBlob, shareFilename(r));
+    flashShareButton('Saved ✓');
+    return;
+  }
+
+  // Still drawing (or file sharing isn't available): wait for the card, then
+  // share it or, failing that, save it — the image, poem and model still reach
+  // the user either way.
+  let blob = (await shareCardPromise) || shareCardBlob;
+  if (!blob) {
+    try {
+      blob = await composeShareCard(r, lastPhoto);
+    } catch {
+      flashShareButton("Couldn't share");
+      return;
+    }
+  }
+
+  const file = new File([blob], shareFilename(r), { type: 'image/png' });
+  if (await tryNativeShare(file, caption, title)) return;
+
+  downloadBlob(blob, shareFilename(r));
+  flashShareButton('Saved ✓');
 }
 
 // ---- Local journal (this device only) ------------------------------------
@@ -811,6 +1084,7 @@ els.cameraSelect.addEventListener('change', (e) => {
 els.againBtn.addEventListener('click', () => show('stage'));
 els.retryBtn.addEventListener('click', () => show('stage'));
 els.saveBtn.addEventListener('click', addToJournal);
+els.shareBtn.addEventListener('click', shareResult);
 
 if (els.langSelect) {
   els.langSelect.addEventListener('change', (e) => setLang(e.target.value));
