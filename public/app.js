@@ -31,9 +31,7 @@ const els = {
   sceneImg: $('sceneImg'),
   poemTitle: $('poemTitle'),
   poemLines: $('poemLines'),
-  resMood: $('resMood'),
   resSource: $('resSource'),
-  moodRow: $('moodRow'),
   makerRow: $('makerRow'),
   howBadge: $('howBadge'),
   colorsBlock: $('colorsBlock'),
@@ -479,17 +477,9 @@ function renderResult(r, photo) {
     els.poemLines.appendChild(p);
   });
 
-  // "See how this was made": the mood and the model that read the frame, both
-  // behind the disclosure. A demo or fallback poem has no model to name, so the
-  // state stays on the badge and the "Made by" row instead of repeating here.
-  const modelTag = r.demo || r.degraded ? '' : modelShort(r);
-  const moodText = [r.mood, modelTag].filter(Boolean).join(' · ');
-  els.resMood.textContent = moodText;
-  els.moodRow.classList.toggle('hidden', !moodText);
-
-  // Be honest about what actually wrote the poem — especially in demo mode,
-  // where every photo returns the same canned verse. "Made by" carries the full
-  // model id; the mood row above only has room for the short name.
+  // "See how this was made": the model that read the frame, behind the
+  // disclosure. A demo or fallback poem has no model to name, so the state
+  // stays on the badge and the "Made by" row instead of repeating here.
   const makerText = modelFull(r);
   els.resSource.textContent = makerText;
   els.resSource.title = r.model || '';
@@ -564,7 +554,7 @@ function copyHex(swatch, label, color) {
 
 // ---- Share: the photo, the poem, the model, and where to find the app -----
 // The share card carries the photo, the poem it earned, the name of the model
-// that wrote it, and the app's address. The colours, objects and mood stay in
+// that wrote it, and the app's address. The colours and objects stay in
 // the app. We draw it here on a canvas so it can travel as one image through
 // the Web Share API; where the browser can't share files, it downloads instead.
 
@@ -872,7 +862,6 @@ function addToJournal() {
   entries.unshift({
     title: lastResult.title,
     lines: lastResult.poem || [],
-    mood: lastResult.mood,
     model: lastResult.model || '',
     language: lastResult.language || getLang(),
     degraded: !!lastResult.degraded,
@@ -904,7 +893,7 @@ function renderJournal() {
 }
 
 // One journal entry: a collapsed summary (thumbnail + title + first line +
-// mood/model/date) that expands to the full poem, the things and colours it
+// model/date) that expands to the full poem, the things and colours it
 // saw, the model that wrote it, and when it was saved.
 function journalItem(e) {
   const when = new Date(e.at);
@@ -948,7 +937,6 @@ function journalItem(e) {
   const meta = document.createElement('p');
   meta.className = 'j-meta';
   meta.textContent = [
-    e.mood,
     modelShort(e), // the model that wrote it, or why it is a demo/fallback
     when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   ]

@@ -4,7 +4,7 @@
 //   1. Serve the mobile web app from ./public
 //   2. Be the only thing that talks to third-party APIs, so keys stay server-side
 //
-//   POST /api/poem    photo -> { title, poem[3], objects[], colors[], mood }
+//   POST /api/poem    photo -> { title, poem[3], objects[], colors[] }
 //   GET  /api/health  { ok, demo, model, models }
 //
 // The flow: an open-weight vision model looks at your photo and writes a tiny
@@ -262,8 +262,7 @@ Reply with STRICT JSON ONLY — no markdown, no code fences, and nothing before 
   "title": "morning window",
   "poem": ["the 5-syllable line", "the 7-syllable line", "the 5-syllable line"],
   "objects": ["mug", "steam", "window light"],
-  "colors": [{"name": "amber", "hex": "#c98a3b"}, {"name": "slate", "hex": "#5b6770"}],
-  "mood": "one calm lowercase word"
+  "colors": [{"name": "amber", "hex": "#c98a3b"}, {"name": "slate", "hex": "#5b6770"}]
 }
 Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty. Output the JSON object immediately: no preamble, no step-by-step reasoning, nothing after the closing brace.`;
 
@@ -280,7 +279,7 @@ const LANGUAGES = new Set(['en', 'fa']);
 const LANG_CLAUSE = {
   fa: `
 
-LANGUAGE: Write EVERYTHING in Persian (Farsi) using the Persian script — the "title", all three poem lines, the object names, the colour names and the "mood" word. Never use Latin transliteration or English words.
+LANGUAGE: Write EVERYTHING in Persian (Farsi) using the Persian script — the "title", all three poem lines, the object names and the colour names. Never use Latin transliteration or English words.
 - Persian does not count syllables the way English or Japanese does, so ignore the 5-7-5 syllable rule above: just write three short, calm lines that notice the scene.
 - Keep the JSON keys in English exactly as specified; only the values are in Persian.`,
 };
@@ -376,7 +375,6 @@ const FALLBACK = {
     { name: 'amber', hex: '#c98a3b' },
     { name: 'cream', hex: '#efe6d2' },
   ],
-  mood: 'still',
 };
 
 // The same "never give up" verse in Persian, so a failed Farsi request still
@@ -390,7 +388,6 @@ const FALLBACK_FA = {
     { name: 'کهربایی', hex: '#c98a3b' },
     { name: 'کرم', hex: '#efe6d2' },
   ],
-  mood: 'آرام',
 };
 
 function fallbackFor(language) {
@@ -408,7 +405,6 @@ function demoResult(language = 'en') {
         { name: 'خاکستری', hex: '#6b7280' },
         { name: 'کرم', hex: '#efe6d2' },
       ],
-      mood: 'آرام',
       demo: true,
       model: 'demo',
     };
@@ -422,7 +418,6 @@ function demoResult(language = 'en') {
       { name: 'slate', hex: '#6b7280' },
       { name: 'cream', hex: '#efe6d2' },
     ],
-    mood: 'still',
     demo: true,
     model: 'demo',
   };
@@ -460,7 +455,6 @@ function normalizePoem(raw, language = 'en') {
     poem: lines.length ? lines : fb.poem.slice(),
     objects: objects.length ? objects : fb.objects.slice(),
     colors: colors.length ? colors : fb.colors.map((c) => ({ ...c })),
-    mood: asString(r.mood, fb.mood).slice(0, 24).toLowerCase() || fb.mood,
   };
 }
 
