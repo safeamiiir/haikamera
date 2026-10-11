@@ -73,6 +73,24 @@ html, body {
 
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 
+/* ---- language selector (top bar) ---- */
+.lang-select {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lang-select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+/* Keep the top bar from crowding on small phones. */
+@media (max-width: 380px) {
+  .lang-select { padding: 6px 8px; font-size: 12.5px; }
+}
+
 /* ---- fork me on GitHub ---- */
 .gh-topbar { display: inline-flex; align-items: center; gap: 6px; }
 .gh-mark { flex-shrink: 0; }
@@ -393,6 +411,20 @@ html, body {
   line-height: 1.4;
   letter-spacing: -0.01em;
   color: var(--ink);
+}
+/* ---- Persian (Farsi) poems: right-to-left, script-friendly font ---- */
+.poem-title[dir="rtl"] {
+  letter-spacing: 0;
+  text-transform: none;
+}
+.poem[dir="rtl"],
+.j-poem[dir="rtl"] {
+  text-align: right;
+}
+.poem[dir="rtl"] .poem-line,
+.j-poem[dir="rtl"] .poem-line {
+  font-family: 'Vazirmatn', 'Noto Naskh Arabic', 'Geeza Pro', Tahoma, 'Iranian Sans', serif;
+  letter-spacing: 0;
 }
 /* ---- "See how this was made" (collapsible extra info) ---- */
 .how {

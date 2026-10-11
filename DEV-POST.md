@@ -12,6 +12,8 @@ That last part is the whole design. The app's job is to be the shortest possible
 
 It is for anyone who wants a nudge to notice what is in front of them. I built it to be handed to a kid without a lecture about privacy, so nothing about the phone or the person leaves the device except one downscaled photo.
 
+One switch is worth calling out, because it changes who the app is for: the poem does not have to be in English. A language selector in the top bar offers English and Farsi (Persian). Pick Persian and the model writes the whole verse in Persian, title, three lines, the objects it names, the colours, the mood, and the poem is laid out right-to-left while the rest of the interface stays English. It is a small feature on paper and a large one for a reader who would otherwise be handed a poem in a script that is not theirs.
+
 Privacy here is construction, not policy:
 
 - The frame is re-encoded in a canvas on your phone, which strips EXIF and GPS before anything is uploaded.
@@ -46,7 +48,7 @@ It is a zero-dependency Node app, MIT licensed. `server.js` is the entire backen
 ```
 server.js                 zero-dependency server: /api/poem, /api/pulse, /api/health
 public/index.html         the entire UI: one screen, one button, one poem card
-public/app.js             camera + upload, EXIF-stripping downscale, render, journal
+public/app.js             camera + upload, EXIF-stripping downscale, language switch, render, journal
 public/sw.js              offline app shell
 .env.example              vision-model config with a table of free options
 ```
@@ -84,6 +86,12 @@ The model has to answer with strict JSON: a title, three poem lines, the objects
 4. Do NOT invent things that are not visible. Do NOT use these clichés:
    beauty, majestic, breathtaking, nature's embrace, whisper, dance, eternal, serene.
 ```
+
+### The poem can be written in another language
+
+The language selector is stored on the device and sent along with the photo. On the server, that choice appends one more instruction to the system prompt: answer in Persian, keep the JSON keys English. The schema never changes, only the values. On the client, a Persian poem is marked right-to-left so it reads the way it should, and each journal entry remembers the language it was written in, so a saved poem reopens with the same direction.
+
+Two details I did not want to get wrong. First, 5-7-5 is an English and Japanese shape; counting syllables that way in Persian is a different exercise, so in that mode I relax the rule to "three short lines" rather than force a count that does not really exist. Second, the fallback matters most exactly when things go wrong, so the guaranteed verse and the demo-mode sample are Persian too. The reader never gets dropped back into English at the moment the model fails.
 
 ### Rate limits are normal, so the server moves on
 

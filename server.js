@@ -270,7 +270,32 @@ Constraints: "title" is a real 2-5 word name for THIS scene (never the words "pl
 const POEM_INSTRUCTION =
   'Write the 5-7-5 haiku about this scene now. Count each line\'s syllables, then reply with the strict JSON object only — no explanation before or after it.';
 
-function buildProviderRequest(target, imageDataUrl) {
+// ---- Poem language -------------------------------------------------------
+// The app writes in English by default. Ask for "fa" and the model answers in
+// Persian (Farsi) instead, so a Farsi speaker reads the poem in their own
+// script rather than a translation of ours. The JSON *keys* never change —
+// only the values do.
+const LANGUAGES = new Set(['en', 'fa']);
+
+const LANG_CLAUSE = {
+  fa: `
+
+LANGUAGE: Write EVERYTHING in Persian (Farsi) using the Persian script — the "title", all three poem lines, the object names, the colour names and the "mood" word. Never use Latin transliteration or English words.
+- Persian does not count syllables the way English or Japanese does, so ignore the 5-7-5 syllable rule above: just write three short, calm lines that notice the scene.
+- Keep the JSON keys in English exactly as specified; only the values are in Persian.`,
+};
+
+function systemPromptFor(language) {
+  return SYSTEM_PROMPT + (LANG_CLAUSE[language] || '');
+}
+
+function poemInstructionFor(language) {
+  return language === 'fa'
+    ? 'Write the three-line Persian (Farsi) poem about this scene now, then reply with the strict JSON object only — no explanation before or after it.'
+    : POEM_INSTRUCTION;
+}
+
+function buildProviderRequest(target, imageDataUrl, language = 'en') {
   const { model, thinkOff = {}, maxTokensParam = 'max_tokens' } = target;
   return {
     model,
@@ -278,11 +303,11 @@ function buildProviderRequest(target, imageDataUrl) {
     [maxTokensParam]: MAX_TOKENS,
     ...thinkOff,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPromptFor(language) },
       {
         role: 'user',
         content: [
-          { type: 'text', text: POEM_INSTRUCTION },
+          { type: 'text', text: poemInstructionFor(language) },
           { type: 'image_url', image_url: { url: imageDataUrl } },
         ],
       },
@@ -354,7 +379,40 @@ const FALLBACK = {
   mood: 'still',
 };
 
-function demoResult() {
+// The same "never give up" verse in Persian, so a failed Farsi request still
+// comes back in the language the reader asked for.
+const FALLBACK_FA = {
+  title: 'قاب آرام',
+  poem: ['نور آرام مینشیند', 'رنگها در انتظارند', 'جهان نفس میکشد'],
+  objects: ['نور', 'سایه'],
+  colors: [
+    { name: 'خاکستری', hex: '#5b6770' },
+    { name: 'کهربایی', hex: '#c98a3b' },
+    { name: 'کرم', hex: '#efe6d2' },
+  ],
+  mood: 'آرام',
+};
+
+function fallbackFor(language) {
+  return language === 'fa' ? FALLBACK_FA : FALLBACK;
+}
+
+function demoResult(language = 'en') {
+  if (language === 'fa') {
+    return {
+      title: 'آشپزخانهی صبح',
+      poem: ['بخار از فنجان بالا میرود', 'نور کهربایی از شیشه میگذرد', 'کاشیهای خاکستری روز را نگه میدارند'],
+      objects: ['فنجان سرامیکی', 'بخار', 'نور پنجره'],
+      colors: [
+        { name: 'کهربایی', hex: '#c98a3b' },
+        { name: 'خاکستری', hex: '#6b7280' },
+        { name: 'کرم', hex: '#efe6d2' },
+      ],
+      mood: 'آرام',
+      demo: true,
+      model: 'demo',
+    };
+  }
   return {
     title: 'Morning kitchen',
     poem: ['Steam climbs from the cup', 'Amber light bends through the glass', 'Grey tiles hold the day'],
@@ -379,7 +437,8 @@ function normalizeColor(input) {
   return { name, hex };
 }
 
-function normalizePoem(raw) {
+function normalizePoem(raw, language = 'en') {
+  const fb = fallbackFor(language);
   const r = raw && typeof raw === 'object' ? raw : {};
   const lines = asArray(r.poem)
     .filter((l) => typeof l === 'string' && l.trim())
@@ -397,17 +456,17 @@ function normalizePoem(raw) {
   if (/plain words|placeholder|^title$/i.test(title) || /^\d+\s*-\s*\d+$/.test(title)) title = '';
 
   return {
-    title: title || FALLBACK.title,
-    poem: lines.length ? lines : FALLBACK.poem.slice(),
-    objects: objects.length ? objects : FALLBACK.objects.slice(),
-    colors: colors.length ? colors : FALLBACK.colors.map((c) => ({ ...c })),
-    mood: asString(r.mood, FALLBACK.mood).slice(0, 24).toLowerCase() || FALLBACK.mood,
+    title: title || fb.title,
+    poem: lines.length ? lines : fb.poem.slice(),
+    objects: objects.length ? objects : fb.objects.slice(),
+    colors: colors.length ? colors : fb.colors.map((c) => ({ ...c })),
+    mood: asString(r.mood, fb.mood).slice(0, 24).toLowerCase() || fb.mood,
   };
 }
 
 // ---- Vision model --------------------------------------------------------
 // `target` is one entry from AI_TRIES: { provider, base, key, model, thinkOff, maxTokensParam }.
-async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT_MS, language = 'en') {
   const { base, key } = target;
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
@@ -418,7 +477,7 @@ async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT
       'HTTP-Referer': AI_APP_URL,
       'X-Title': AI_APP_TITLE,
     },
-    body: JSON.stringify(buildProviderRequest(target, imageDataUrl)),
+    body: JSON.stringify(buildProviderRequest(target, imageDataUrl, language)),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
@@ -445,8 +504,9 @@ const isDailyQuotaError = (err) =>
 
 const isFatalError = (err) => isFatalProviderError(err?.status) || isDailyQuotaError(err);
 
-async function writePoem(imageDataUrl) {
-  if (DEMO) return demoResult();
+async function writePoem(imageDataUrl, language = 'en') {
+  const lang = LANGUAGES.has(language) ? language : 'en';
+  if (DEMO) return { ...demoResult(lang), language: lang };
 
   const tries = AI_TRIES;
   let parsed = null;
@@ -480,7 +540,7 @@ async function writePoem(imageDataUrl) {
 
       let data;
       try {
-        data = await callVisionModel(target, imageDataUrl, Math.min(REQUEST_TIMEOUT_MS, remaining));
+        data = await callVisionModel(target, imageDataUrl, Math.min(REQUEST_TIMEOUT_MS, remaining), lang);
       } catch (err) {
         lastErr = err;
         break;
@@ -518,9 +578,10 @@ async function writePoem(imageDataUrl) {
     throw fatalErr;
   }
 
-  const result = normalizePoem(parsed || FALLBACK);
+  const result = normalizePoem(parsed || fallbackFor(lang), lang);
   result.model = usedModel || 'fallback-verse';
   if (!parsed) result.degraded = true;
+  result.language = lang;
 
   const reason = parsed
     ? ''
@@ -528,7 +589,7 @@ async function writePoem(imageDataUrl) {
       ? ` lastErr=${lastErr.status || ''} ${String(lastErr.detail || lastErr.message || '').slice(0, 120)}`
       : ` unparseable="${rawSample}"`;
   console.log(
-    `[poem] model=${result.model} degraded=${Boolean(result.degraded)} ${Date.now() - started}ms${reason}`
+    `[poem] model=${result.model} lang=${result.language} degraded=${Boolean(result.degraded)} ${Date.now() - started}ms${reason}`
   );
   return result;
 }
@@ -712,11 +773,12 @@ const server = createServer(async (req, res) => {
     }
     try {
       const body = await readBody(req, MAX_BODY_BYTES);
-      const { image } = JSON.parse(body || '{}');
+      const { image, language } = JSON.parse(body || '{}');
       if (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(image)) {
         return sendJson(res, 400, { error: 'Expected a JPEG/PNG/WebP data URL in "image".' });
       }
-      return sendJson(res, 200, await writePoem(image));
+      const lang = LANGUAGES.has(language) ? language : 'en';
+      return sendJson(res, 200, await writePoem(image, lang));
     } catch (err) {
       const status = err?.status && err.status >= 400 && err.status < 600 ? err.status : 500;
       console.error('[poem]', status, err?.message || err);
