@@ -49,7 +49,6 @@ try {
 }
 
 const PORT = Number(process.env.PORT || 8787);
-const AI_API_KEY = (process.env.AI_API_KEY || '').trim();
 
 // One config line picks the brains. Each preset pairs a provider's base URL
 // with a strong, free, open-weight vision model (plus a same-provider fallback).
@@ -57,24 +56,42 @@ const AI_API_KEY = (process.env.AI_API_KEY || '').trim();
 const PROVIDERS = {
   openrouter: {
     base: 'https://openrouter.ai/api/v1',
+    // Gemma leads: it's the best writer of the free set. The shared pool does
+    // rate-limit it often, so the chain falls through to the models that answer
+    // most dependably — and since a 429 comes back in ~300ms, leading with Gemma
+    // costs almost nothing. `openrouter/free` is deliberately NOT here: it can
+    // route to a content-safety classifier instead of a poet.
     model: 'google/gemma-4-31b-it:free',
     fallbacks:
-      'google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,openrouter/free',
+      'google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,dots-studio/dots-3-note-preview:free',
+    // OpenRouter's unified switch. Models that don't reason simply ignore it.
+    noThink: { reasoning: { enabled: false } },
   },
   groq: {
     base: 'https://api.groq.com/openai/v1',
-    model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-    fallbacks: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    // Groq retired its Llama 4 vision models (Maverick in March 2026, Scout in
+    // July) and the advertised replacements are text-only — so for a while a
+    // Groq key couldn't read a photo at all. Qwen 3.8 27B is now its one
+    // multimodal model. It's a *preview* model, so treat it as a moving target.
+    model: 'qwen/qwen3.8-27b',
+    fallbacks: '',
+    // Groq's own spelling. Qwen 3.8 27B reasons by default; "none" switches it
+    // off. (`reasoning_format` is left alone — "raw" + JSON mode would 400.)
+    noThink: { reasoning_effort: 'none' },
+    // Groq deprecated `max_tokens` in favour of this name.
+    maxTokensParam: 'max_completion_tokens',
   },
   nvidia: {
     base: 'https://integrate.api.nvidia.com/v1',
     model: 'meta/llama-3.2-11b-vision-instruct',
     fallbacks: '',
+    noThink: {},
   },
   hf: {
     base: 'https://router.huggingface.co/v1',
     model: 'Qwen/Qwen3-VL-30B-A3B-Instruct',
     fallbacks: '',
+    noThink: {},
   },
 };
 
@@ -88,26 +105,103 @@ function detectProvider(key) {
   return 'openrouter';
 }
 
-const AI_PROVIDER = (process.env.AI_PROVIDER || detectProvider(AI_API_KEY)).trim().toLowerCase();
-const preset = PROVIDERS[AI_PROVIDER] || PROVIDERS.openrouter;
-
-const AI_BASE_URL = (process.env.AI_BASE_URL || preset.base).replace(/\/+$/, '');
-const AI_MODEL = (process.env.AI_MODEL || preset.model).trim();
-const AI_FALLBACK_MODELS = (process.env.AI_FALLBACK_MODELS ?? preset.fallbacks)
-  .split(',')
-  .map((m) => m.trim())
-  .filter((m) => m && m !== AI_MODEL);
-const AI_MODELS = [AI_MODEL, ...AI_FALLBACK_MODELS];
-
 // OpenRouter asks for these to attribute traffic; harmless elsewhere.
 const AI_APP_TITLE = (process.env.AI_APP_TITLE || 'Haikamera').trim();
-const AI_APP_URL = (process.env.AI_APP_URL || 'https://github.com/').trim();
+const AI_APP_URL = (process.env.AI_APP_URL || 'https://github.com/safeamiiir/haikamera').trim();
 
-const DEMO = !AI_API_KEY;
+// You can run more than one provider at once. AI_API_KEY holds a single key
+// (the usual case). AI_API_KEYS takes a comma-separated list, each auto-detected
+// from its prefix and tried in the order written:
+//
+//   AI_API_KEYS=gsk_...,sk-or-v1-...
+//
+// so a Groq key leads (fast, 1,000/day) and OpenRouter free picks up the slack.
+const API_KEYS = (process.env.AI_API_KEYS || process.env.AI_API_KEY || '')
+  .split(',')
+  .map((k) => k.trim())
+  .filter(Boolean);
+
+// AI_PROVIDER / AI_BASE_URL / AI_MODEL / AI_FALLBACK_MODELS describe ONE
+// provider, so they only apply when a single key is configured. With several
+// keys each keeps its own provider's defaults — otherwise you'd be asking Groq
+// for an OpenRouter model.
+const SINGLE_KEY = API_KEYS.length === 1;
+
+function endpointFor(apiKey) {
+  const name = (SINGLE_KEY && process.env.AI_PROVIDER
+    ? process.env.AI_PROVIDER
+    : detectProvider(apiKey)
+  )
+    .trim()
+    .toLowerCase();
+  const preset = PROVIDERS[name] || PROVIDERS.openrouter;
+
+  const base = ((SINGLE_KEY && process.env.AI_BASE_URL) || preset.base).replace(/\/+$/, '');
+  const model = ((SINGLE_KEY && process.env.AI_MODEL) || preset.model).trim();
+  const fallbacks = ((SINGLE_KEY ? process.env.AI_FALLBACK_MODELS : undefined) ?? preset.fallbacks)
+    .split(',')
+    .map((m) => m.trim())
+    .filter((m) => m && m !== model);
+
+  // Reasoning models think before they answer, which for a three-line haiku is
+  // waste — and the thinking often eats the whole output budget so `content`
+  // comes back empty (see MAX_TOKENS below). Each host spells "don't think"
+  // differently, so the exact params live on the preset. We only send them to
+  // the preset's own base URL: point AI_BASE_URL at some other host and it gets
+  // the plain OpenAI body unless you set AI_REASONING=off yourself.
+  const onPresetBase = base === preset.base.replace(/\/+$/, '');
+  const thinkOff =
+    (process.env.AI_REASONING || (onPresetBase ? 'off' : 'on')) === 'on'
+      ? {}
+      : { ...(preset.noThink || {}) };
+
+  return {
+    name,
+    base,
+    key: apiKey,
+    thinkOff,
+    maxTokensParam: preset.maxTokensParam || 'max_tokens',
+    models: [model, ...fallbacks],
+  };
+}
+
+const AI_ENDPOINTS = API_KEYS.map(endpointFor);
+
+// The flat list writePoem walks: every model of every provider, in order.
+const AI_TRIES = AI_ENDPOINTS.flatMap((ep) =>
+  ep.models.map((model) => ({
+    provider: ep.name,
+    base: ep.base,
+    key: ep.key,
+    model,
+    thinkOff: ep.thinkOff,
+    maxTokensParam: ep.maxTokensParam,
+  }))
+);
+const AI_MODELS = AI_TRIES.map((t) => t.model);
+
+const DEMO = AI_TRIES.length === 0;
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB
-const REQUEST_TIMEOUT_MS = 60_000; // per model
-const TOTAL_BUDGET_MS = 70_000; // across all models before we settle for the fallback verse
+
+// Most free vision models available today are *reasoning* models: they think in
+// a `reasoning` channel before they answer. For a three-line haiku that is pure
+// waste — and worse, the thinking eats the output budget, so `content` comes
+// back empty and the JSON never arrives. That is the single biggest cause of the
+// "fallback verse" card. So give the reply room. Whether to also switch thinking
+// off is per-endpoint, because each host spells it differently — see `noThink`
+// and `thinkOff` in the provider presets above.
+const MAX_TOKENS = Math.max(300, Number(process.env.AI_MAX_TOKENS) || 2000);
+
+const REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.AI_REQUEST_TIMEOUT_MS) || 30_000);
+const TOTAL_BUDGET_MS = Math.max(2000, Number(process.env.AI_TOTAL_BUDGET_MS) || 60_000);
+// Don't start an attempt there's no time to finish, and don't let the guard
+// swallow a deliberately tiny test budget.
+const MIN_ATTEMPT_MS = Math.min(4000, Math.max(250, Math.floor(TOTAL_BUDGET_MS / 10)));
+// Kept low on purpose: a free OpenRouter account is capped per DAY (50 requests,
+// or 1,000 with a one-off $10 credit), and every attempt that comes back with
+// prose instead of JSON spends one. Failing fast beats burning the day's budget.
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.AI_MAX_ATTEMPTS) || 2);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -171,16 +265,18 @@ Reply with STRICT JSON ONLY — no markdown, no code fences, and nothing before 
   "colors": [{"name": "amber", "hex": "#c98a3b"}, {"name": "slate", "hex": "#5b6770"}],
   "mood": "one calm lowercase word"
 }
-Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty.`;
+Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty. Output the JSON object immediately: no preamble, no step-by-step reasoning, nothing after the closing brace.`;
 
 const POEM_INSTRUCTION =
-  'Write the 5-7-5 haiku about this scene now. Count each line\'s syllables and reply with the strict JSON object only.';
+  'Write the 5-7-5 haiku about this scene now. Count each line\'s syllables, then reply with the strict JSON object only — no explanation before or after it.';
 
-function buildProviderRequest(model, imageDataUrl) {
+function buildProviderRequest(target, imageDataUrl) {
+  const { model, thinkOff = {}, maxTokensParam = 'max_tokens' } = target;
   return {
     model,
     temperature: 0.8,
-    max_tokens: 600,
+    [maxTokensParam]: MAX_TOKENS,
+    ...thinkOff,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       {
@@ -207,11 +303,39 @@ function extractJson(text) {
   }
 }
 
-function extractText(data) {
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((part) => part?.text || '').join(' ');
-  return '';
+// The usable text of a reply, in priority order. Reasoning models emit the
+// answer in `content` once they finish thinking — but when they run into the
+// output cap mid-thought, `content` is empty and the JSON only exists in the
+// `reasoning` channel. So hand back every channel worth scanning.
+function messageTexts(data) {
+  const msg = data?.choices?.[0]?.message || {};
+  const texts = [];
+  const push = (value) => {
+    if (typeof value === 'string') {
+      if (value.trim()) texts.push(value);
+    } else if (Array.isArray(value)) {
+      const joined = value.map((part) => part?.text || '').join(' ');
+      if (joined.trim()) texts.push(joined);
+    }
+  };
+  push(msg.content);
+  push(msg.reasoning);
+  push(msg.reasoning_content);
+  return texts;
+}
+
+// First JSON array inside some text, tolerating stray prose/fences.
+function extractJsonArray(text) {
+  if (!text) return null;
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    const value = JSON.parse(text.slice(start, end + 1));
+    return Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 const asArray = (v) => (Array.isArray(v) ? v : []);
@@ -282,18 +406,20 @@ function normalizePoem(raw) {
 }
 
 // ---- Vision model --------------------------------------------------------
-async function callVisionModel(model, imageDataUrl) {
-  const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+// `target` is one entry from AI_TRIES: { provider, base, key, model, thinkOff, maxTokensParam }.
+async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const { base, key } = target;
+  const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${AI_API_KEY}`,
+      Authorization: `Bearer ${key}`,
       // OpenRouter attribution headers — ignored by other hosts.
       'HTTP-Referer': AI_APP_URL,
       'X-Title': AI_APP_TITLE,
     },
-    body: JSON.stringify(buildProviderRequest(model, imageDataUrl)),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    body: JSON.stringify(buildProviderRequest(target, imageDataUrl)),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
@@ -302,49 +428,95 @@ async function callVisionModel(model, imageDataUrl) {
     err.detail = detail.slice(0, 400);
     throw err;
   }
-  return extractText(await res.json());
+  return res.json();
 }
 
-// Only auth/credit problems are worth stopping for. A 403 is usually
-// model-specific (e.g. a paid model blocked by a $0 key), so keep trying other
-// models rather than giving up.
-const isFatalProviderError = (status) => status === 401 || status === 402;
+// Only a bad key is worth stopping for. Everything else is model-specific:
+// a 402 just means *this* model costs money your $0 key can't cover, and a
+// 403 usually means the same — so keep trying the models behind it (a free
+// fallback may still work). A 401 means the key itself is wrong.
+const isFatalProviderError = (status) => status === 401;
+
+// The daily free-model cap is different in kind: once it's gone, EVERY free
+// model on the account 429s, so walking the rest of the chain only adds
+// latency. Stop at the first one and say so plainly.
+const isDailyQuotaError = (err) =>
+  err?.status === 429 && /per-day|per day|free-models/i.test(err.detail || '');
+
+const isFatalError = (err) => isFatalProviderError(err?.status) || isDailyQuotaError(err);
 
 async function writePoem(imageDataUrl) {
   if (DEMO) return demoResult();
 
-  const models = AI_MODELS.length ? AI_MODELS : [AI_MODEL];
+  const tries = AI_TRIES;
   let parsed = null;
   let lastErr = null;
+  let fatalErr = null;
   let rawSample = '';
   let usedModel = null;
   const started = Date.now();
+  const deadline = started + TOTAL_BUDGET_MS;
+  // No single model may eat the whole budget: each gets a fair share, so one
+  // that hangs can't starve the models behind it. (The old code let the first
+  // model sit through its full timeout twice and left nothing for the rest,
+  // which is how a slow model turned into the fallback verse.)
+  const share = Math.max(MIN_ATTEMPT_MS, Math.floor(TOTAL_BUDGET_MS / tries.length));
+  // A bad key or an exhausted daily quota kills every model behind that key —
+  // but not the models behind a *different* key. So retire that key's chain and
+  // carry on to the next provider instead of giving up on the whole request.
+  const deadKeys = new Set();
 
-  for (const model of models) {
-    if (Date.now() - started > TOTAL_BUDGET_MS) break;
-    // Retry the SAME model only when it answered but with unparseable JSON
-    // (stray prose/fences). Transport errors (429, 5xx) skip straight to the
-    // next model — retrying a rate-limited pool immediately is pointless.
-    for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
-      let text;
+  for (const target of tries) {
+    if (deadKeys.has(target.key)) continue;
+    const modelDeadline = Math.min(deadline, Date.now() + share);
+
+    // Retry the SAME model only when it answered but with unparseable text
+    // (stray prose/fences, or one of the empty 200s these free pools emit).
+    // Transport errors (429, 5xx) skip straight to the next model — retrying a
+    // rate-limited pool immediately is pointless.
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && !parsed; attempt += 1) {
+      const remaining = modelDeadline - Date.now();
+      if (remaining < MIN_ATTEMPT_MS) break;
+
+      let data;
       try {
-        text = await callVisionModel(model, imageDataUrl);
+        data = await callVisionModel(target, imageDataUrl, Math.min(REQUEST_TIMEOUT_MS, remaining));
       } catch (err) {
         lastErr = err;
         break;
       }
-      parsed = extractJson(text);
+
+      const texts = messageTexts(data);
+      for (const text of texts) {
+        parsed = extractJson(text);
+        if (parsed) break;
+      }
       if (parsed) {
-        usedModel = model;
+        usedModel = target.model;
       } else {
-        rawSample = String(text || '').slice(0, 200);
+        const last = texts[texts.length - 1];
+        rawSample = last ? String(last).slice(0, 200) : 'empty reply (no content or reasoning)';
+        lastErr = null; // answered, just not parseable — not a transport error
       }
     }
+
     if (parsed) break;
-    if (isFatalProviderError(lastErr?.status)) break;
+    if (isFatalError(lastErr)) {
+      deadKeys.add(target.key);
+      fatalErr = lastErr;
+      continue; // another provider's key may still work
+    }
+    if (Date.now() >= deadline) break;
   }
 
-  if (!parsed && isFatalProviderError(lastErr?.status)) throw lastErr;
+  // Only give up outright when *every* configured key is unusable (wrong key, no
+  // credit, or the day's free quota spent). If a key was left, the honest answer
+  // is still the labelled fallback verse.
+  const everyKeyDead = deadKeys.size >= new Set(tries.map((t) => t.key)).size;
+  if (!parsed && fatalErr && everyKeyDead) {
+    if (isDailyQuotaError(fatalErr)) fatalErr.quota = true;
+    throw fatalErr;
+  }
 
   const result = normalizePoem(parsed || FALLBACK);
   result.model = usedModel || 'fallback-verse';
@@ -394,20 +566,21 @@ STRICT JSON only — a single array of lowercase strings, no prose, no code fenc
 
 async function generatePulsePool() {
   const tried = [];
-  for (const model of AI_MODELS) {
+  for (const { base, key, model, thinkOff, maxTokensParam } of AI_TRIES) {
     try {
-      const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${AI_API_KEY}`,
+          Authorization: `Bearer ${key}`,
           'HTTP-Referer': AI_APP_URL,
           'X-Title': AI_APP_TITLE,
         },
         body: JSON.stringify({
           model,
           temperature: 1,
-          max_tokens: 300,
+          [maxTokensParam]: MAX_TOKENS,
+          ...thinkOff,
           messages: [
             { role: 'system', content: PULSE_PROMPT },
             { role: 'user', content: 'Generate the list now.' },
@@ -420,14 +593,17 @@ async function generatePulsePool() {
         if (isFatalProviderError(res.status)) break; // bad key / no credit
         continue; // 429/5xx — try the next model
       }
-      const text = extractText(await res.json());
-      const start = text.indexOf('[');
-      const end = text.lastIndexOf(']');
-      if (start === -1 || end <= start) {
+      const texts = messageTexts(await res.json());
+      let list = null;
+      for (const text of texts) {
+        list = extractJsonArray(text);
+        if (list) break;
+      }
+      if (!list) {
         tried.push(`${model}:no-json`);
         continue;
       }
-      const words = JSON.parse(text.slice(start, end + 1))
+      const words = list
         .filter((w) => typeof w === 'string')
         .map((w) => w.trim().toLowerCase().replace(/[^a-z-]/g, ''))
         .filter((w) => /ing$/.test(w) && w.length >= 5 && w.length <= 24);
@@ -548,7 +724,11 @@ const server = createServer(async (req, res) => {
         error:
           status === 413
             ? 'That photo is too large. Try again.'
-            : 'Could not reach the model right now. Check your API key and try again.',
+            : err?.quota
+              ? AI_ENDPOINTS.length > 1
+                ? "Every free key is out for the day. Free tiers reset daily — add OpenRouter credit or another provider's key to keep going now."
+                : "Today's free model requests are used up. A free OpenRouter account gets 50 a day (1,000 with a one-off $10 credit), and it resets daily — or add a second key (e.g. Groq) and the app will use that instead."
+              : 'Could not reach the model right now. Check your API key and try again.',
         demo: DEMO,
       });
     }
@@ -559,9 +739,28 @@ const server = createServer(async (req, res) => {
     return sendJson(res, 200, {
       ok: true,
       demo: DEMO,
-      provider: DEMO ? 'demo' : AI_PROVIDER,
-      model: DEMO ? 'demo' : AI_MODEL,
+      // With several keys this reads e.g. "groq+openrouter".
+      provider: DEMO ? 'demo' : AI_ENDPOINTS.map((ep) => ep.name).join('+'),
+      model: DEMO ? 'demo' : AI_TRIES[0].model,
       models: DEMO ? ['demo'] : AI_MODELS,
+      // Handy when a verse comes back marked "fallback verse": which key each
+      // model sits behind, and whether its thinking is switched off.
+      providers: DEMO
+        ? []
+        : AI_ENDPOINTS.map((ep) => ({
+            provider: ep.name,
+            models: ep.models,
+            reasoning: Object.keys(ep.thinkOff).length ? 'off' : 'on',
+          })),
+      reasoning: DEMO
+        ? 'demo'
+        : AI_ENDPOINTS.every((ep) => Object.keys(ep.thinkOff).length)
+          ? 'off'
+          : AI_ENDPOINTS.some((ep) => Object.keys(ep.thinkOff).length)
+            ? 'mixed'
+            : 'on',
+      max_tokens: MAX_TOKENS,
+      total_budget_ms: TOTAL_BUDGET_MS,
     });
   }
 
@@ -583,9 +782,11 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  const mode = DEMO
-    ? 'DEMO MODE (no API key — canned verse)'
-    : `LIVE — ${AI_PROVIDER} · ${AI_MODEL}${AI_FALLBACK_MODELS.length ? ` (fallbacks: ${AI_FALLBACK_MODELS.join(', ')})` : ''}`;
+  // One line per key, so mixed providers are obvious in the banner.
+  const chain = AI_ENDPOINTS.map(
+    (ep) => `${ep.name}: ${ep.models.join(' → ')}`
+  ).join('\n              ');
+  const mode = DEMO ? 'DEMO MODE (no API key — canned verse)' : `LIVE — ${chain}`;
   console.log(`\n  Haikamera is running.  ${mode}`);
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Phone:   http://<your-computer-LAN-IP>:${PORT}  (same Wi-Fi)\n`);

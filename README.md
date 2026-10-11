@@ -39,17 +39,21 @@ The server speaks the plain OpenAI chat-completions schema. The brains are one l
 # Usually you just paste a key; provider + model are auto-detected.
 AI_API_KEY=sk-or-v1-...
 
+# Run two providers at once: tried in order, each key picking up when the
+# other is busy or out for the day. One key is spent, the other still answers.
+AI_API_KEYS=gsk_your_groq_key,sk-or-v1-your_openrouter_key
+
 # Or be explicit. Any of these work. Same code. Different poems.
 AI_BASE_URL=https://openrouter.ai/api/v1         AI_MODEL=google/gemma-4-31b-it:free
-AI_BASE_URL=https://api.groq.com/openai/v1       AI_MODEL=meta-llama/llama-4-maverick-17b-128e-instruct
+AI_BASE_URL=https://api.groq.com/openai/v1       AI_MODEL=qwen/qwen3.8-27b
 AI_BASE_URL=https://integrate.api.nvidia.com/v1  AI_MODEL=meta/llama-3.2-11b-vision-instruct
 AI_BASE_URL=https://router.huggingface.co/v1     AI_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct
-AI_FALLBACK_MODELS=google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,openrouter/free
+AI_FALLBACK_MODELS=dots-studio/dots-3-note-preview:free,google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free
 ```
 
-The default is **Google Gemma 4 31B** (open-weight, image+text) on OpenRouter's free tier — it grounds colours and objects better than the Llama 4 pair and clings to the strict 5-7-5 JSON shape far more reliably, which matters when the whole point is a tidy little haiku. If the primary model errors, is rate-limited, or is withdrawn, the server automatically falls through the `AI_FALLBACK_MODELS` list before ever giving up. For tougher scenes, the paid **Qwen3-VL** line (`qwen/qwen3-vl-30b-a3b-instruct` or `qwen/qwen3-vl-235b-a22b-instruct` on OpenRouter) is the strongest visual-grounding swap.
+The default is **Google Gemma 4 31B** (open-weight, image+text) on OpenRouter's free tier — it grounds colours and objects better than the rest and clings to the strict 5-7-5 JSON shape, which matters when the whole point is a tidy little haiku. The shared free pool rate-limits it often, but a 429 comes back in ~300ms, so the chain simply falls through: **Gemma 4 26B**, then **Nemotron 3 Nano Omni** and **dots-3-note-preview** — the two that answer most dependably (~3s a poem with thinking switched off). If a model errors, is rate-limited, or is withdrawn, the server falls through `AI_FALLBACK_MODELS` before ever giving up — and with `AI_API_KEYS` it will also cross from one provider to the next. For tougher scenes, the paid **Qwen3-VL** line (`qwen/qwen3-vl-30b-a3b-instruct` or `qwen/qwen3-vl-235b-a22b-instruct` on OpenRouter) is the strongest visual-grounding swap.
 
-> **Free tier is shared.** OpenRouter's `:free` models pool capacity, so they're commonly rate-limited (429) at busy times. The server fails over in order and the result card quietly marks a backup verse as *best guess* — every attempt still returns a real, per-photo poem. Fastest, most reliable free path is **Groq** (Llama 4, no card); the nicest quality/cost balance is a few dollars of OpenRouter credit on a model like `google/gemini-2.5-flash`.
+> **The free tier has a daily ceiling, and it is the usual reason you see "fallback verse."** A free OpenRouter account is capped at **20 requests/minute and 50 requests/day** on `:free` models (a one-off $10 credit raises the day to **1,000**; the per-minute cap stays). Once the day is gone, *every* free model on that key 429s. With one key the app says so plainly instead of showing you a canned poem; with `AI_API_KEYS` it retires the dead key and routes to the next provider. Three things keep you under the ceiling: the biggest model call is a **512px** image (~330 tokens), reasoning is **switched off** (each host in its own dialect — OpenRouter's `reasoning: {enabled: false}`, Groq's `reasoning_effort: "none"`; thinking turned a 22s request into 3s and often ate the whole output budget, which is what emptied the reply), and the server retires a key the moment its day-quota 429 lands rather than walking the rest of that key's chain. **The most reliable free path is Groq** — no card, 30 requests/minute and **1,000 requests/day**, and the server auto-detects a `gsk_` key. Note what Groq can and can't do now: it retired its Llama 4 vision models in 2026 (Maverick in March, Scout in July) and the suggested replacements are text-only, so its one vision model is `qwen/qwen3.8-27b` — a *preview* model. For quality, a few dollars of OpenRouter credit on `google/gemini-2.5-flash` is the best value; the cheapest vision model on the platform (`inclusionai/ling-3.0-flash-vl`, $0.021/M in) costs about **$0.000013 a poem** — roughly 10,000 poems per 13¢.
 
 If a provider gets slow, changes its limits, or turns hostile, I point the config somewhere else and the app is unchanged. Want a different vibe — spookier, more scientific, all-food? Change the system prompt. That freedom is the entire difference between building *on* AI and building *inside* someone else's AI.
 
@@ -63,13 +67,13 @@ If a provider gets slow, changes its limits, or turns hostile, I point the confi
    - **Take a photo** — on a phone that's the native rear camera (`<input capture>`; works on iOS Safari and Android Chrome, no permissions dance). On a desktop it opens the webcam in-app, and falls back to a file chooser if there's no camera or permission is denied. **On a Mac, if your iPhone is set up as a Continuity Camera, the app auto-selects it** (and offers a camera picker otherwise).
    - **Upload an image** — pick a photo you already have. Same on every device.
 2. Point at (or pick) any scene. Anything at all.
-3. The frame is downscaled to ≤1024px, re-encoded to JPEG on-device (EXIF/GPS gone), and POSTed to the local server proxy.
+3. The frame is re-encoded on-device into **two copies**: a ≤1024px one to show you, and a **≤512px** one to send to the model. A poem needs the gist of the scene, not a forensic read, so the model call carries roughly **330 image tokens instead of 870** — a fraction of the cost, latency and rate-limit pressure, and the poem still lands on what's actually there. The re-encode is what strips EXIF/GPS; only the small copy is POSTed to the local server proxy.
 4. An open-weight vision model reads the scene and returns strict JSON: a short title, a **three-line haiku (5-7-5 syllables)**, a mood, the **objects** it can see, and the dominant **colours** with hex codes.
 5. While it writes, the waiting line shows a **playful gerund** — *Haikoizing…*, *Shakespearing…*, *Poemising…* — drawn from a batch the AI invents on the fly (the server asks for fresh words and caches them; a built-in list covers the very first run).
 6. You get **your own photo**, the poem beneath it, and a **"See how this was made"** disclosure with the mood, the model that wrote it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal if you like.
 7. Then go look at the real thing.
 
-The model is prompted to ground every line in what is *actually visible* — real objects, real colours — to keep it calm and family-friendly, and to **never refuse**: if the photo is unclear it still answers, describing the colours and shapes it can honestly see. If JSON parsing ever fails, the server falls back to a guaranteed verse, quietly marked as a *best guess*.
+The model is prompted to ground every line in what is *actually visible* — real objects, real colours — to keep it calm and family-friendly, and to **never refuse**: if the photo is unclear it still answers, describing the colours and shapes it can honestly see. If JSON parsing ever fails, the server falls back to a guaranteed verse, honestly labelled *fallback verse*.
 
 ---
 
@@ -106,7 +110,7 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
    | Provider | Free tier | Notes |
    |---|---|---|
    | **OpenRouter** (default) | 20+ free models, no card | Broad choice; free vision via Gemma 4 / others |
-   | **Groq** | No card, very fast | Free per-model daily limits; vision via Llama 4 |
+   | **Groq** | No card, very fast | 30/min, 1,000/day; vision via `qwen/qwen3.8-27b` (its only one — a preview model) |
    | **NVIDIA NIM** | 120+ open-weight models | Best open-weight catalogue; vision included |
    | **Hugging Face** | Inference Providers free tier | One token covers the vision call |
 
@@ -116,10 +120,12 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
    cp .env.example .env
    # edit .env: paste AI_API_KEY. Provider + a good free vision model are
    # auto-detected from the key (sk-or- → OpenRouter, gsk_ → Groq, …).
+   # Two free keys? Use AI_API_KEYS=sk-or-v1-...,gsk_... instead — tried in
+   # order, and one keeps answering when the other is out for the day.
    node server.js
    ```
 
-3. Confirm it's live: `curl http://localhost:8787/api/health` → `{"ok":true,"demo":false,"provider":"openrouter","model":"google/gemma-4-31b-it:free",...}`. If `demo` is `true`, no key was found — you're seeing the same sample verse for every photo.
+3. Confirm it's live: `curl http://localhost:8787/api/health` → `{"ok":true,"demo":false,"provider":"openrouter","model":"google/gemma-4-31b-it:free","reasoning":"off",...}`. If `demo` is `true`, no key was found — you're seeing the same sample verse for every photo.
 
 ### Deploy
 
@@ -127,7 +133,7 @@ The app tries to follow Apple's own setup: if you've turned on **Continuity Came
 
 It's a single stateless Node process plus static files, and the key stays server-side — so any host that runs Node works (Fly, Render, Railway, a VPS, even a Raspberry Pi on your LAN). Put it behind HTTPS and add it to your home screen. Rotate a key if a deploy ever leaks it.
 
-**On Render.** It runs as a Node web service: build `npm install`, start `node server.js`, health check `/api/health`. Add `AI_API_KEY` (and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
+**On Render.** It runs as a Node web service: build `npm install`, start `node server.js`, health check `/api/health`. Add `AI_API_KEY` (or `AI_API_KEYS` for several, and optionally `AI_MODEL`) in the service's **Environment** tab — server-side only, never in the repo.
 
 For it to redeploy on every merge to `main`, Render needs the repo connected through the **GitHub App**. A service created from a *public repo URL* can't auto-deploy and must be deployed by hand (<https://render.com/docs/deploys#automatic-deploys>), so connect the provider instead:
 
@@ -179,6 +185,7 @@ public/
 ## Honest limits
 
 - It's a poem, not a field guide. The verse is a *response to* what's there, not a measurement of it.
+- **"fallback verse" is an honest label.** The card names whoever wrote your poem. If it says *fallback verse*, no model answered in time and you're reading a canned verse — not one about your scene. On the free tier that usually means the **daily 50-request cap** is spent (see above); it resets daily. Otherwise retry, or point `AI_MODEL` at a provider that's actually up (Groq).
 - **Never eat, touch, or handle anything based on an AI output.** The model is prompted to keep it kind; you should keep it safe.
 - Writing needs a connection (the vision model runs in the cloud). The app shell itself loads offline.
 - Providers' free tiers have rate limits. The server has small built-in limiters to protect your quota from a single busy client.

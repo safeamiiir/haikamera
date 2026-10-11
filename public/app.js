@@ -57,8 +57,19 @@ const els = {
 
 const JOURNAL_KEY = 'haikamera.journal.v1';
 const LEGACY_JOURNAL_KEY = 'touchgrass.journal.v4'; // pre-rename key, migrated once
-const MAX_EDGE = 1024;         // px — plenty for the model, keeps uploads tiny
+
+// Three encodings come out of one captured frame:
+//   display — what you see on screen (and what the journal keeps)
+//   payload — what the model sees. A poem needs the gist of the scene, not a
+//             forensic read, so this is small: it keeps image tokens (and cost,
+//             and latency, and rate-limit pressure) down to a fraction. At 512px
+//             a typical frame is ~330 image tokens.
+//   thumb   — tiny, for the on-device journal list
+const MAX_EDGE = 1024;        // px — the photo shown on screen
 const JPEG_QUALITY = 0.82;
+const MODEL_EDGE = 512;       // px — sent to the model
+const MODEL_QUALITY = 0.6;
+const THUMB_EDGE = 160;       // px — journal thumbnail
 
 // Playful gerunds for the "writing" screen. Filled from /api/pulse (the server
 // asks the AI to invent fresh ones); this list is the always-available fallback.
@@ -153,16 +164,22 @@ function chooseCamera() {
 // ---- Image handling ------------------------------------------------------
 // Downscale + re-encode via canvas. Drawing to a canvas and exporting drops all
 // metadata, including GPS EXIF — so location never leaves the phone.
+function encode(canvas, edge, quality) {
+  const scale = Math.min(1, edge / Math.max(canvas.width, canvas.height));
+  if (scale === 1) return canvas.toDataURL('image/jpeg', quality);
+  const small = document.createElement('canvas');
+  small.width = Math.max(1, Math.round(canvas.width * scale));
+  small.height = Math.max(1, Math.round(canvas.height * scale));
+  small.getContext('2d').drawImage(canvas, 0, 0, small.width, small.height);
+  return small.toDataURL('image/jpeg', quality);
+}
+
 function withThumb(canvas) {
-  const full = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-
-  const tScale = Math.min(1, 160 / Math.max(canvas.width, canvas.height));
-  const tCanvas = document.createElement('canvas');
-  tCanvas.width = Math.max(1, Math.round(canvas.width * tScale));
-  tCanvas.height = Math.max(1, Math.round(canvas.height * tScale));
-  tCanvas.getContext('2d').drawImage(canvas, 0, 0, tCanvas.width, tCanvas.height);
-
-  return { full, thumb: tCanvas.toDataURL('image/jpeg', 0.7) };
+  return {
+    display: encode(canvas, MAX_EDGE, JPEG_QUALITY), // what you see
+    payload: encode(canvas, MODEL_EDGE, MODEL_QUALITY), // what the model sees
+    thumb: encode(canvas, THUMB_EDGE, 0.7), // journal thumbnail
+  };
 }
 
 function processImage(file) {
@@ -363,9 +380,9 @@ function captureFrame() {
 }
 
 // ---- Write the poem ------------------------------------------------------
-async function identify({ full, thumb }) {
+async function identify({ display, payload, thumb }) {
   lastThumb = thumb;
-  els.previewImg.src = thumb || full;
+  els.previewImg.src = thumb || display;
   startPulses();
   show('loading');
 
@@ -373,7 +390,7 @@ async function identify({ full, thumb }) {
     const res = await fetch('/api/poem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: full }),
+      body: JSON.stringify({ image: payload }),
     });
 
     if (!res.ok) {
@@ -381,7 +398,7 @@ async function identify({ full, thumb }) {
       throw new Error(data.error || `Request failed (${res.status}).`);
     }
 
-    renderResult(await res.json(), full);
+    renderResult(await res.json(), display);
   } catch (err) {
     if (!navigator.onLine) {
       showError("You're offline. Writing needs a connection, but everything else runs on your phone.");
@@ -410,7 +427,7 @@ function renderResult(r, photo) {
   });
 
   // "See how this was made": mood + model, clearly labelled behind a disclosure.
-  const moodText = [r.mood, r.degraded ? 'best guess' : ''].filter(Boolean).join(' · ');
+  const moodText = [r.mood, r.degraded ? 'fallback verse' : ''].filter(Boolean).join(' · ');
   els.resMood.textContent = moodText;
   els.moodRow.classList.toggle('hidden', !moodText);
 
@@ -425,7 +442,7 @@ function renderResult(r, photo) {
   els.makerRow.classList.toggle('hidden', !makerText);
 
   // A tiny badge on the summary so state is clear even when collapsed.
-  const badgeText = r.demo ? 'demo' : r.degraded ? 'best guess' : '';
+  const badgeText = r.demo ? 'demo' : r.degraded ? 'fallback verse' : '';
   els.howBadge.textContent = badgeText;
   els.howBadge.classList.toggle('hidden', !badgeText);
 

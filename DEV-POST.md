@@ -41,7 +41,7 @@ You can try the whole UI with zero setup: run it with no API key and it boots in
 
 {% embed https://github.com/safeamiiir/haikamera %}
 
-It is a zero-dependency Node app, MIT licensed. `server.js` is the entire backend (static files plus three endpoints) in about 600 lines, and `public/` is the whole front end. No build step, no framework, no `node_modules`. Clone it, run `node server.js`, and it is up.
+It is a zero-dependency Node app, MIT licensed. `server.js` is the entire backend (static files plus three endpoints) in about 800 lines, and `public/` is the whole front end. No build step, no framework, no `node_modules`. Clone it, run `node server.js`, and it is up.
 
 ```
 server.js                 zero-dependency server: /api/poem, /api/pulse, /api/health
@@ -61,13 +61,16 @@ The server speaks plain OpenAI chat-completions. The default model is Google Gem
 
 ```bash
 AI_API_KEY=sk-or-v1-...   # sk-or- => OpenRouter; gsk_ => Groq; nvapi- => NVIDIA; hf_ => Hugging Face
+
+# or run two providers at once, tried in the order written:
+AI_API_KEYS=sk-or-v1-...,gsk_...
 ```
 
 Want a different brain? One environment variable. Same code, different poem:
 
 ```bash
-AI_MODEL=meta-llama/llama-4-maverick-17b-128e-instruct   # on Groq
-AI_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct                  # on Hugging Face
+AI_MODEL=qwen/qwen3.8-27b                 # Groq's current vision model
+AI_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct   # on Hugging Face
 ```
 
 ### Where the poem actually gets made
@@ -84,11 +87,20 @@ The model has to answer with strict JSON: a title, three poem lines, the objects
 
 ### Rate limits are normal, so the server moves on
 
-Free `:free` model pools get 429'd constantly. The server walks a fallback chain, retries a model only when it answered with unparseable JSON instead of a transport error, and if everything fails it returns a guaranteed verse flagged as a *best guess*. Every tap produces a poem. The health endpoint tells the truth about what is running:
+Free `:free` model pools get 429'd constantly. The server walks a fallback chain, retries a model only when it answered with unparseable JSON instead of a transport error, and if everything fails it returns a guaranteed verse, honestly labelled a *fallback verse*. Every tap produces a poem.
+
+The bigger fix was to stop betting on a single provider. `AI_API_KEYS` takes a list, and the order of the keys is the priority order. A key that comes back with a daily-quota 429 is retired for the rest of the request and the next provider picks up, so exhausting OpenRouter's 50-a-day hands off to Groq's 1,000 in about 300ms without the user seeing a thing. Every provider spells "stop thinking" differently, so the request builder keeps that per-host: OpenRouter takes `reasoning: {enabled: false}`, Groq takes `reasoning_effort: "none"`.
+
+One thing worth saying out loud, because it cost me an afternoon: a "free vision model" is a moving target. Groq retired its Llama 4 vision models in 2026, Maverick in March and Scout in July, and the replacement it suggested was text-only, so for a while a Groq key could not read a photo at all. Its one multimodal model now is a *preview*. If you build on a free tier, treat the model name as configuration, not architecture.
+
+The health endpoint tells the truth about what is actually running:
 
 ```
 $ curl https://haikamera.onrender.com/api/health
-{"ok":true,"demo":false,"provider":"openrouter","model":"google/gemma-4-31b-it:free", "models":[...]}
+{"ok":true,"demo":false,"provider":"openrouter+groq","reasoning":"off",
+ "models":["google/gemma-4-31b-it:free", ...],
+ "providers":[{"provider":"openrouter","models":[...],"reasoning":"off"},
+              {"provider":"groq","models":["qwen/qwen3.8-27b"],"reasoning":"off"}]}
 ```
 
 ### The loading words are model-generated too
@@ -101,7 +113,7 @@ The waiting screen shows gerunds like "Haikoizing…", "Shakespearing…", "Colo
 - Some models echoed the schema's placeholder title back verbatim. Now the normalizer drops known placeholders and substitutes a real name.
 - After a deploy, a cached `app.js` running against new HTML threw `Cannot set properties of null`. I serve the app shell with `Cache-Control: no-cache`, made the service worker network-first, and added a one-time reload when an updated service worker takes over.
 
-On the client, the interesting part is the privacy step: downscale to 1024px, re-encode through a canvas (that re-encode is what drops EXIF and GPS), then POST a data URL. On desktop it opens the webcam, and on a Mac with Continuity Camera it auto-selects your iPhone as the camera.
+On the client, the interesting part is the privacy step: re-encode through a canvas (that re-encode is what drops EXIF and GPS), then POST a data URL. One captured frame becomes three encodings — a 1024px copy for the screen and the journal, a 512px copy (about 330 tokens) that is the only thing the model ever sees, and a 160px thumbnail for the journal list. On desktop it opens the webcam, and on a Mac with Continuity Camera it auto-selects your iPhone as the camera.
 
 Deploy is Render: build `npm install`, start `node server.js`, health check `/api/health`, key in the service environment. Merges to `main` auto-deploy through the GitHub App.
 
