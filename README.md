@@ -7,9 +7,9 @@ A mobile web app. No install, no account, no personal data collected.
 - **It's a game about looking.** The whole point is the two seconds *before* the poem: noticing the amber of a mug, the moss on a wall, the slate of the sky. The poem just hands your attention back to the world.
 - **Screen time is short by design.** Tap **Snap a poem**, take or upload a photo, and a moment later you have a three-line haiku about the colours and objects in front of you. The app's whole job is to make you stop looking at the app.
 - **Open-weight AI at its core.** The verse comes from an open-weight vision model on a free, OpenAI-compatible API. Swap the model or the provider with a single environment variable — no code changes, no lock-in.
-- **More than one language.** A selector on the landing page picks the poem's language. Choose **Farsi (Persian)** and the model returns the whole verse — title, lines, objects, colour names, mood — in Persian, laid out right-to-left while the rest of the interface stays English.
+- **More than one language.** A selector on the landing page picks the poem's language. Choose **Farsi (Persian)** and the model returns the whole verse — title, lines, objects, colour names — in Persian, laid out right-to-left while the rest of the interface stays English.
 - **Your own photo is the only image.** We never generate or fetch another picture. No stock photos, no image search, no second image host that ever sees your scene.
-- **Share the poem with the world, cheaply.** A **Share** button draws your photo, the verse, and the model that wrote it into one tidy card and hands it to the phone's share sheet — or saves it as a PNG where the browser can't share files. The tucked-away details (colours, objects, mood) stay in the app.
+- **Share the poem with the world, cheaply.** A **Share** button draws your photo, the verse, the model that wrote it, and the app's address into one tidy card and hands it to the phone's share sheet — or saves it as a PNG where the browser can't share files. The tucked-away details (colours and objects) stay in the app.
 - **Zero personal info.** No accounts, no emails, no cookies, no analytics. Your camera frame is re-encoded on your phone (**stripping EXIF/GPS**) before it is ever sent, held in memory for one request, and never stored. The API key lives on the server, so it is never exposed to the browser.
 
 ---
@@ -72,9 +72,9 @@ A small selector in the top bar chooses the poem's language — **English** or *
    - **Upload an image** — pick a photo you already have. Same on every device.
 2. Point at (or pick) any scene. Anything at all.
 3. The frame is re-encoded on-device into **two copies**: a ≤1024px one to show you, and a **≤512px** one to send to the model. A poem needs the gist of the scene, not a forensic read, so the model call carries roughly **330 image tokens instead of 870** — a fraction of the cost, latency and rate-limit pressure, and the poem still lands on what's actually there. The re-encode is what strips EXIF/GPS; only the small copy is POSTed to the local server proxy.
-4. An open-weight vision model reads the scene and returns strict JSON: a short title, a **three-line haiku (5-7-5 syllables)**, a mood, the **objects** it can see, and the dominant **colours** with hex codes. Choose **Farsi (Persian)** and the same fields come back in Persian instead — see below.
+4. An open-weight vision model reads the scene and returns strict JSON: a short title, a **three-line haiku (5-7-5 syllables)**, the **objects** it can see, and the dominant **colours** with hex codes. Choose **Farsi (Persian)** and the same fields come back in Persian instead — see below.
 5. While it writes, the waiting line shows a **playful gerund** — *Haikoizing…*, *Shakespearing…*, *Poemising…* — drawn from a batch the AI invents on the fly (the server asks for fresh words and caches them; a built-in list covers the very first run).
-6. You get **your own photo**, the poem beneath it, and a **"See how this was made"** disclosure with the mood, the model that wrote it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal — or hit **Share** and a card with just the photo, the poem and the model is handed to your phone's share sheet (or saved as a PNG on browsers that can't share files).
+6. You get **your own photo**, the poem beneath it, and a **"See how this was made"** disclosure with the model that wrote it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal — or hit **Share** and a card with the photo, the poem, the model and the app's address is handed to your phone's share sheet (or saved as a PNG on browsers that can't share files).
 7. Then go look at the real thing.
 
 The model is prompted to ground every line in what is *actually visible* — real objects, real colours — to keep it calm and family-friendly, and to **never refuse**: if the photo is unclear it still answers, describing the colours and shapes it can honestly see. If JSON parsing ever fails, the server falls back to a guaranteed verse, honestly labelled *fallback verse*.
@@ -84,7 +84,7 @@ The model is prompted to ground every line in what is *actually visible* — rea
 The language selector in the top bar offers **English** and **Farsi (Persian)**. It changes the poem, not the interface.
 
 - The choice is stored in `localStorage`, so it survives a reload, and it's restored on the next visit.
-- The selected language travels with the photo. The server adds a matching instruction to the poem prompt, so the model writes the title, the three lines, the object names, the colour names and the mood word in the chosen language. The JSON *keys* stay English underneath; only the values change.
+- The selected language travels with the photo. The server adds a matching instruction to the poem prompt, so the model writes the title, the three lines, the object names and the colour names in the chosen language. The JSON *keys* stay English underneath; only the values change.
 - A Farsi poem is rendered **right-to-left**, and saved journal entries remember their language, so they reopen the same way. A **Farsi share card** drawing reads right-to-left too.
 - If the model fails, or the app is running in demo mode, the guaranteed verse and the sample come back in the chosen language too — no sudden drop back into English mid-flow.
 
