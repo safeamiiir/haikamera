@@ -412,6 +412,23 @@ async function identify({ display, payload, thumb }) {
 }
 
 // ---- Render --------------------------------------------------------------
+// What wrote a poem, described two ways. `modelShort` names it for tight spots
+// ("google/gemma-4-31b-it:free" -> "gemma-4-31b-it"); `modelFull` is the exact
+// id for attribution. Both work on a live result and on a saved journal entry,
+// since each carries `model`, `degraded` and `demo`.
+function modelShort(r) {
+  if (!r) return '';
+  if (r.demo) return 'demo sample';
+  if (r.degraded) return 'fallback verse';
+  return r.model ? String(r.model).split('/').pop().replace(/:free$/, '') : '';
+}
+function modelFull(r) {
+  if (!r) return '';
+  if (r.demo) return 'demo sample';
+  if (r.degraded) return 'fallback verse';
+  return r.model ? String(r.model) : '';
+}
+
 function renderResult(r, photo) {
   lastResult = r;
 
@@ -426,19 +443,21 @@ function renderResult(r, photo) {
     els.poemLines.appendChild(p);
   });
 
-  // "See how this was made": mood + model, clearly labelled behind a disclosure.
-  const moodText = [r.mood, r.degraded ? 'fallback verse' : ''].filter(Boolean).join(' · ');
+  // "See how this was made": the mood and the model that read the frame, both
+  // behind the disclosure. A demo or fallback poem has no model to name, so the
+  // state stays on the badge and the "Made by" row instead of repeating here.
+  const modelTag = r.demo || r.degraded ? '' : modelShort(r);
+  const moodText = [r.mood, modelTag].filter(Boolean).join(' · ');
   els.resMood.textContent = moodText;
   els.moodRow.classList.toggle('hidden', !moodText);
 
   // Be honest about what actually wrote the poem — especially in demo mode,
-  // where every photo returns the same canned verse.
-  let makerText = '';
-  if (r.demo) makerText = 'demo sample';
-  else if (r.degraded) makerText = 'fallback verse';
-  else if (r.model) makerText = String(r.model).split('/').pop().replace(/:free$/, '');
+  // where every photo returns the same canned verse. "Made by" carries the full
+  // model id; the mood row above only has room for the short name.
+  const makerText = modelFull(r);
   els.resSource.textContent = makerText;
   els.resSource.title = r.model || '';
+  els.resSource.classList.toggle('model-id', !r.demo && !r.degraded && !!r.model);
   els.makerRow.classList.toggle('hidden', !makerText);
 
   // A tiny badge on the summary so state is clear even when collapsed.
@@ -528,10 +547,16 @@ function updateJournalCount() {
 function addToJournal() {
   if (!lastResult) return;
   const entries = loadJournal();
+  // Keep everything the model told us, not just the verse: which model wrote
+  // it, whether it was a real one or a fallback, and the things it named.
   entries.unshift({
     title: lastResult.title,
     lines: lastResult.poem || [],
     mood: lastResult.mood,
+    model: lastResult.model || '',
+    degraded: !!lastResult.degraded,
+    demo: !!lastResult.demo,
+    objects: lastResult.objects || [],
     colors: lastResult.colors || [],
     thumb: lastThumb,
     at: Date.now(),
@@ -557,11 +582,13 @@ function renderJournal() {
   entries.forEach((e) => els.journalList.appendChild(journalItem(e)));
 }
 
-// One journal entry: a collapsed summary (thumbnail + title + first line) that
-// expands to the full poem, the colours it saw, and when it was saved.
+// One journal entry: a collapsed summary (thumbnail + title + first line +
+// mood/model/date) that expands to the full poem, the things and colours it
+// saw, the model that wrote it, and when it was saved.
 function journalItem(e) {
   const when = new Date(e.at);
   const lines = e.lines || [];
+  const objects = e.objects || [];
   const colors = e.colors || [];
 
   const li = document.createElement('li');
@@ -599,7 +626,11 @@ function journalItem(e) {
 
   const meta = document.createElement('p');
   meta.className = 'j-meta';
-  meta.textContent = [e.mood, when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })]
+  meta.textContent = [
+    e.mood,
+    modelShort(e), // the model that wrote it, or why it is a demo/fallback
+    when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+  ]
     .filter(Boolean)
     .join(' · ');
 
@@ -627,6 +658,22 @@ function journalItem(e) {
     poem.appendChild(p);
   });
   body.appendChild(poem);
+
+  if (objects.length) {
+    const label = document.createElement('p');
+    label.className = 'j-label';
+    label.textContent = 'Things it saw';
+    body.appendChild(label);
+
+    const chips = document.createElement('ul');
+    chips.className = 'object-chips j-objects';
+    objects.forEach((o) => {
+      const li = document.createElement('li');
+      li.textContent = o;
+      chips.appendChild(li);
+    });
+    body.appendChild(chips);
+  }
 
   if (colors.length) {
     const label = document.createElement('p');
@@ -656,6 +703,18 @@ function journalItem(e) {
       swatches.appendChild(swatch);
     });
     body.appendChild(swatches);
+  }
+
+  if (modelShort(e)) {
+    const label = document.createElement('p');
+    label.className = 'j-label';
+    label.textContent = 'Made by';
+    body.appendChild(label);
+
+    const maker = document.createElement('p');
+    maker.className = 'j-model';
+    maker.textContent = modelFull(e);
+    body.appendChild(maker);
   }
 
   const saved = document.createElement('p');

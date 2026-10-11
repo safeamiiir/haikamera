@@ -460,6 +460,8 @@ html, body {
   color: var(--ink);
   text-transform: capitalize;
 }
+/* Model ids are case-sensitive, so don't title-case them. */
+.how-row dd.model-id { text-transform: none; }
 .how-block { margin-top: 14px; }
 .how-label {
   margin: 0 0 8px;
@@ -734,6 +736,8 @@ html, body {
   color: var(--ink-soft);
 }
 .j-swatches { margin-top: 0; }
+.j-objects { margin-top: 0; }
+.j-model { margin: 0; font-size: 12.5px; font-weight: 600; word-break: break-all; }
 .j-when { margin: 12px 0 0; font-size: 12px; color: var(--ink-soft); }
 
 .journal-empty { color: var(--ink-soft); font-size: 14px; text-align: center; padding: 16px 0; }
