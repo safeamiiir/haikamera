@@ -53,8 +53,6 @@ const els = {
   offlineBanner: $('offlineBanner'),
   privacyLine: $('privacyLine'),
   langSelect: $('langSelect'),
-  modeNoun: $('modeNoun'),
-  modeBlurb: $('modeBlurb'),
   startLabel: $('startLabel'),
 };
 
@@ -106,12 +104,6 @@ function setMode(mode) {
   }
 
   const isStory = next === 'story';
-  if (els.modeNoun) els.modeNoun.textContent = isStory ? 'story' : 'poem';
-  if (els.modeBlurb) {
-    els.modeBlurb.textContent = isStory
-      ? 'A short story in one paragraph, grown from what is actually there.'
-      : 'Point at anything — your desk, a window, a trail.';
-  }
   if (els.startLabel) els.startLabel.textContent = isStory ? 'Snap a story' : 'Snap a poem';
 
   document.querySelectorAll('.mode-option').forEach((btn) => {
