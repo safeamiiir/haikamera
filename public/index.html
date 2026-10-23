@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Haikamera — a tiny poem about your scene</title>
-  <meta name="description" content="Point your phone at anything and get a tiny poem about it. No app, no login, no data collection." />
+  <title>Haikamera — a tiny poem or story about your scene</title>
+  <meta name="description" content="Point your phone at anything and get a tiny poem or one-paragraph story about it. No app, no login, no data collection." />
   <meta name="theme-color" content="#123a24" />
   <meta name="color-scheme" content="light dark" />
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -56,13 +56,19 @@
     <!-- Capture stage -->
     <section class="stage" id="stage">
       <div class="hint">
-        <h1>Turn a scene into a <em>poem</em>.</h1>
-        <p>Point at anything — your desk, a window, a trail.</p>
+        <h1>Turn a scene into a <em id="modeNoun">poem</em>.</h1>
+        <p id="modeBlurb">Point at anything — your desk, a window, a trail.</p>
+      </div>
+
+      <!-- What the model writes: a three-line haiku or one short paragraph. -->
+      <div class="mode-switch" id="modeSwitch" role="group" aria-label="Choose a haiku or short story">
+        <button class="mode-option is-active" type="button" data-mode="haiku" aria-pressed="true">Haiku</button>
+        <button class="mode-option" type="button" data-mode="story" aria-pressed="false">Short story</button>
       </div>
 
       <button class="shutter" id="startBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="captureMenu">
         <span class="shutter-ring" aria-hidden="true"></span>
-        <span class="shutter-label">Snap a poem</span>
+        <span class="shutter-label" id="startLabel">Snap a poem</span>
       </button>
 
       <!-- Chooser: ALWAYS shown when you tap "Snap a poem" -->
@@ -179,7 +185,7 @@
     <p class="offline-banner hidden" id="offlineBanner">You're offline — writing needs a connection.</p>
 
     <footer class="foot">
-      <p>Your own photo, plus a tiny poem about it. A free, <strong>open-weight</strong> vision model does the looking.</p>
+      <p>Your own photo, plus a tiny poem or story about it. A free, <strong>open-weight</strong> vision model does the looking.</p>
       <p>
         A fun project, built fully on
         <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer">OpenCode</a>.
@@ -198,7 +204,7 @@
       <h3>Field journal</h3>
       <button class="ghost-btn" id="closeJournal" type="button" aria-label="Close">✕</button>
     </div>
-    <p class="journal-note">Stored only in this browser on your device. Never uploaded, never synced. Clear it any time. Tap an entry to see the full poem.</p>
+    <p class="journal-note">Stored only in this browser on your device. Never uploaded, never synced. Clear it any time. Tap an entry to see the full poem or story.</p>
     <ul class="journal-list" id="journalList"></ul>
     <div class="journal-actions">
       <button class="ghost-btn danger" id="clearJournal" type="button">Clear journal</button>

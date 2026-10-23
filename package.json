@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Point your phone at any scene and a free, open-weight vision model writes a short colour-poem about it. No app, no login, no data collection.",
+  "description": "Point your phone at any scene and a free, open-weight vision model writes a short colour-poem or one-paragraph story about it. No app, no login, no data collection.",
   "engines": {
     "node": ">=18"
   },

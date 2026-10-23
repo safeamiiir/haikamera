@@ -4,12 +4,13 @@
 //   1. Serve the mobile web app from ./public
 //   2. Be the only thing that talks to third-party APIs, so keys stay server-side
 //
-//   POST /api/poem    photo -> { title, poem[3], objects[], colors[] }
-//   GET  /api/health  { ok, demo, model, models }
+//   POST /api/poem    photo + mode -> { title, poem[3] | story, objects[], colors[] }
+//   GET  /api/health  { ok, demo, model, models, modes }
 //
-// The flow: an open-weight vision model looks at your photo and writes a tiny
-// haiku (5-7-5) grounded in the colours and objects that are actually there.
-// The picture you see is your own photo — we never invent or fetch another one.
+// The flow: an open-weight vision model looks at your photo and writes either a
+// tiny haiku (5-7-5) or a one-paragraph short story, grounded in the colours and
+// objects that are actually there. The picture you see is your own photo — we
+// never invent or fetch another one.
 //
 // Privacy by construction:
 //   - No accounts, no cookies, no analytics, no logs of image content.
@@ -240,10 +241,24 @@ function makeLimiter(max, windowMs) {
 
 const limitedPoem = makeLimiter(30, 10 * 60 * 1000);
 
-// ---- The poet prompt -----------------------------------------------------
-const SYSTEM_PROMPT = `You are "Haikamera" — a poet who stops walking, looks at one ordinary thing, and writes a tiny colour-haiku about it.
+// ---- The writer prompt ---------------------------------------------------
+// Two forms share the same act of looking: a haiku (three counted lines) and a
+// one-paragraph short story. Both are grounded in the colours and objects that
+// are really in the frame; only the shape of the writing changes.
+const MODES = new Set(['haiku', 'story']);
 
-You are shown ONE photograph. Look before you write: quietly name the colours you can see and the concrete objects in the frame. Then write a haiku from those notes.
+const SCENE_PROMPT = `You are "Haikamera" — a poet and storyteller who stops walking, looks at one ordinary thing, and writes about it.
+
+You are shown ONE photograph. Look before you write: quietly name the colours you can see and the concrete objects in the frame. Then write from those notes.
+
+Grounding rules (follow them in both forms):
+- Every object and colour you name must really be in the photo. Do NOT invent things that are not visible.
+- Lead with colour and light. Dim light, shadows, reflections and textures are all fair game.
+- Keep it sensory, calm, kind and family-friendly.
+- Do NOT use these clichés: beauty, majestic, breathtaking, nature's embrace, whisper, dance, eternal, serene.
+- If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty.`;
+
+const HAIKU_RULES = `Write a HAIKU — a tiny three-line colour poem.
 
 Hard rules (follow all of them):
 1. Exactly THREE lines, with exactly this many syllables: 5, then 7, then 5.
@@ -252,49 +267,85 @@ Hard rules (follow all of them):
    - Plain, short words make counting easy; reach for them.
 2. Every line must mention something that is really in the photo — a concrete object (mug, railing, leaf, kettle, tiles, wire) and, in most lines, a specific colour (amber, moss, slate, rust, cream, ochre, ash, indigo).
 3. Lead with colour and light. Dim light, shadows, reflections and textures are all fair game.
-4. Do NOT invent things that are not visible. Do NOT use these clichés: beauty, majestic, breathtaking, nature's embrace, whisper, dance, eternal, serene.
-5. Present tense, sensory, calm, kind, family-friendly. No rhyme needed.
+4. Present tense, sensory, calm, kind, family-friendly. No rhyme needed.`;
 
-After the poem, list the objects you can actually see and the dominant colours.
+const STORY_RULES = `Write a SHORT STORY — exactly ONE paragraph, about 80-120 words.
 
-Reply with STRICT JSON ONLY — no markdown, no code fences, and nothing before or after the braces — in exactly this shape:
+Follow the craft of a tiny story:
+1. GROUND IT IN THE FRAME. Set the story in the place the photo shows. Name at least three concrete objects that are actually visible and at least two of its dominant colours.
+2. GIVE SOMEONE A SMALL WANT. Put one ordinary character at the centre — a person the frame hints at (a hand, a coat, an empty chair), an animal that is actually there, or even the light itself. If the frame shows no one, do not invent a stranger; let an object, an animal, or the light carry the moment. In the opening sentence, show where they are and what they are doing or hoping for.
+3. TURN THE MOMENT. In the middle, let something small shift: a sound, a change in the light, a thing noticed, a tiny obstacle. Keep the stakes small and real; no drama the frame cannot hold.
+4. END QUIETLY. Finish on a concrete image or gesture that shows the change, not a lesson or a moral. Leave a little space for the reader.
+5. SHOW, DON'T TELL. Use plain, specific, sensory words. No summary of feelings, no moralising, no twist that needs more room than one paragraph.
+6. ONE PARAGRAPH ONLY. 80-120 words, 4-7 sentences. No line breaks. Do not rhyme or write in verse.
+
+You may imagine a small moment around the scene, but keep every physical detail consistent with the photo. Do not name a famous person, brand, or real event. Do not give the story a second paragraph.`;
+
+function outputRulesFor(mode) {
+  const header = `Reply with STRICT JSON ONLY — no markdown, no code fences, and nothing before or after the braces — in exactly this shape:`;
+  if (mode === 'story') {
+    return `${header}
+{
+  "title": "morning window",
+  "story": "the one-paragraph story",
+  "objects": ["mug", "steam", "window light"],
+  "colors": [{"name": "amber", "hex": "#c98a3b"}, {"name": "slate", "hex": "#5b6770"}]
+}
+Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); "story" is ONE paragraph of 80-120 words that follows the craft rules above; 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty. Output the JSON object immediately: no preamble, no step-by-step reasoning, nothing after the closing brace.`;
+  }
+  return `${header}
 {
   "title": "morning window",
   "poem": ["the 5-syllable line", "the 7-syllable line", "the 5-syllable line"],
   "objects": ["mug", "steam", "window light"],
   "colors": [{"name": "amber", "hex": "#c98a3b"}, {"name": "slate", "hex": "#5b6770"}]
 }
-Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty. Output the JSON object immediately: no preamble, no step-by-step reasoning, nothing after the closing brace.`;
+Constraints: "title" is a real 2-5 word name for THIS scene (never the words "plain words" or a placeholder); exactly three poem lines with 5, 7 and 5 syllables; 2-6 objects, 3-6 colours, each hex a valid "#rrggbb". If the photo is unclear, still answer — describe the colours and shapes you can honestly see. Never refuse and never leave a field empty. Output the JSON object immediately: no preamble, no step-by-step reasoning, nothing after the closing brace.`;
+}
 
-const POEM_INSTRUCTION =
-  'Write the 5-7-5 haiku about this scene now. Count each line\'s syllables, then reply with the strict JSON object only — no explanation before or after it.';
-
-// ---- Poem language -------------------------------------------------------
+// ---- Language ------------------------------------------------------------
 // The app writes in English by default. Ask for "fa" and the model answers in
-// Persian (Farsi) instead, so a Farsi speaker reads the poem in their own
-// script rather than a translation of ours. The JSON *keys* never change —
+// Persian (Farsi) instead, so a Farsi speaker reads the poem or story in their
+// own script rather than a translation of ours. The JSON *keys* never change —
 // only the values do.
 const LANGUAGES = new Set(['en', 'fa']);
 
-const LANG_CLAUSE = {
-  fa: `
+function languageClause(language, mode = 'haiku') {
+  if (language !== 'fa') return '';
+  const textField = mode === 'story' ? 'the "story" paragraph' : 'all three poem lines';
+  const formRule =
+    mode === 'story'
+      ? 'Write the story as ONE paragraph of about 80-120 Persian words, with the same craft: a place, a small want, a turn, and a quiet resolution.'
+      : 'Persian does not count syllables the way English or Japanese does, so ignore the 5-7-5 syllable rule above: just write three short, calm lines that notice the scene.';
+  return `
 
-LANGUAGE: Write EVERYTHING in Persian (Farsi) using the Persian script — the "title", all three poem lines, the object names and the colour names. Never use Latin transliteration or English words.
-- Persian does not count syllables the way English or Japanese does, so ignore the 5-7-5 syllable rule above: just write three short, calm lines that notice the scene.
-- Keep the JSON keys in English exactly as specified; only the values are in Persian.`,
-};
-
-function systemPromptFor(language) {
-  return SYSTEM_PROMPT + (LANG_CLAUSE[language] || '');
+LANGUAGE: Write EVERYTHING in Persian (Farsi) using the Persian script — the "title", ${textField}, the object names and the colour names. Never use Latin transliteration or English words.
+- ${formRule}
+- Keep the JSON keys in English exactly as specified; only the values are in Persian.`;
 }
 
-function poemInstructionFor(language) {
+function systemPromptFor(language, mode = 'haiku') {
+  const form = mode === 'story' ? STORY_RULES : HAIKU_RULES;
+  return [SCENE_PROMPT, form, outputRulesFor(mode)].join('\n\n') + languageClause(language, mode);
+}
+
+const HAIKU_INSTRUCTION =
+  'Write the 5-7-5 haiku about this scene now. Count each line\'s syllables, then reply with the strict JSON object only — no explanation before or after it.';
+const STORY_INSTRUCTION =
+  'Write the one-paragraph short story about this scene now — 80-120 words, one paragraph. Then reply with the strict JSON object only — no explanation before or after it.';
+
+function writeInstructionFor(language, mode = 'haiku') {
+  if (mode === 'story') {
+    return language === 'fa'
+      ? 'Write the one-paragraph Persian (Farsi) short story about this scene now, then reply with the strict JSON object only — no explanation before or after it.'
+      : STORY_INSTRUCTION;
+  }
   return language === 'fa'
     ? 'Write the three-line Persian (Farsi) poem about this scene now, then reply with the strict JSON object only — no explanation before or after it.'
-    : POEM_INSTRUCTION;
+    : HAIKU_INSTRUCTION;
 }
 
-function buildProviderRequest(target, imageDataUrl, language = 'en') {
+function buildProviderRequest(target, imageDataUrl, language = 'en', mode = 'haiku') {
   const { model, thinkOff = {}, maxTokensParam = 'max_tokens' } = target;
   return {
     model,
@@ -302,11 +353,11 @@ function buildProviderRequest(target, imageDataUrl, language = 'en') {
     [maxTokensParam]: MAX_TOKENS,
     ...thinkOff,
     messages: [
-      { role: 'system', content: systemPromptFor(language) },
+      { role: 'system', content: systemPromptFor(language, mode) },
       {
         role: 'user',
         content: [
-          { type: 'text', text: poemInstructionFor(language) },
+          { type: 'text', text: writeInstructionFor(language, mode) },
           { type: 'image_url', image_url: { url: imageDataUrl } },
         ],
       },
@@ -366,7 +417,7 @@ const asArray = (v) => (Array.isArray(v) ? v : []);
 const asString = (v, fallback = '') => (typeof v === 'string' ? v.trim() : fallback);
 
 // ---- Never give up: a guaranteed verse -----------------------------------
-const FALLBACK = {
+const FALLBACK_HAIKU = {
   title: 'A quiet frame',
   poem: ['Light settles slowly', 'The colours wait to be named', 'The world holds its breath'],
   objects: ['light', 'shadow'],
@@ -377,9 +428,21 @@ const FALLBACK = {
   ],
 };
 
-// The same "never give up" verse in Persian, so a failed Farsi request still
+const FALLBACK_STORY = {
+  title: 'A quiet frame',
+  story:
+    'Light crosses the windowsill and settles on the floor. A cup has gone cold beside the wall, and a grey shadow stretches across the tiles. No one is in the room, but something has just begun: dust turns in the amber air, the curtain shifts, and the morning goes quietly about its work.',
+  objects: ['light', 'cup', 'shadow', 'tiles'],
+  colors: [
+    { name: 'slate', hex: '#5b6770' },
+    { name: 'amber', hex: '#c98a3b' },
+    { name: 'cream', hex: '#efe6d2' },
+  ],
+};
+
+// The same "never give up" writing in Persian, so a failed Farsi request still
 // comes back in the language the reader asked for.
-const FALLBACK_FA = {
+const FALLBACK_HAIKU_FA = {
   title: 'قاب آرام',
   poem: ['نور آرام مینشیند', 'رنگها در انتظارند', 'جهان نفس میکشد'],
   objects: ['نور', 'سایه'],
@@ -390,11 +453,24 @@ const FALLBACK_FA = {
   ],
 };
 
-function fallbackFor(language) {
-  return language === 'fa' ? FALLBACK_FA : FALLBACK;
+const FALLBACK_STORY_FA = {
+  title: 'پنجره‌ی آرام',
+  story:
+    'نور از لبه‌ی پنجره می‌گذرد و آرام روی زمین می‌نشیند. فنجانی سرد کنار دیوار مانده و سایه‌ای خاکستری روی کاشی‌ها کشیده شده است. کسی در اتاق نیست، اما چیزی تازه شروع شده: گرد و غبار در هوای کهربایی می‌چرخد، پرده تکان می‌خورد و صبح بی‌صدا کارش را ادامه می‌دهد.',
+  objects: ['نور', 'فنجان', 'سایه', 'کاشی'],
+  colors: [
+    { name: 'خاکستری', hex: '#5b6770' },
+    { name: 'کهربایی', hex: '#c98a3b' },
+    { name: 'کرم', hex: '#efe6d2' },
+  ],
+};
+
+function fallbackFor(language, mode = 'haiku') {
+  if (mode === 'story') return language === 'fa' ? FALLBACK_STORY_FA : FALLBACK_STORY;
+  return language === 'fa' ? FALLBACK_HAIKU_FA : FALLBACK_HAIKU;
 }
 
-function demoResult(language = 'en') {
+function demoHaikuResult(language = 'en') {
   if (language === 'fa') {
     return {
       title: 'آشپزخانهی صبح',
@@ -423,6 +499,44 @@ function demoResult(language = 'en') {
   };
 }
 
+function demoStoryResult(language = 'en') {
+  if (language === 'fa') {
+    return {
+      title: 'ساعت کهربایی',
+      story:
+        'فنجان روی طاقچه‌ی پنجره سرد شده، اما مینا هنوز هر دو دستش را دور آن نگه داشته است. بخار دیگر بالا نمی‌رود و آشپزخانه آن‌قدر ساکت است که صدای تیک‌تیک یخچال را می‌شنود. از پشت شیشه، پشت‌بام‌های خاکستری رنگِ کاغذ خیس شده‌اند و نواری کهربایی از نور از روی کاشی‌های کرم می‌گذرد و روی انگشتانش می‌ایستد. می‌خواست ده دقیقه پیش راه افتاده باشد. به‌جایش، تماشا می‌کند که نور از دیوار بالا می‌رود تا به فنجان ترک‌خورده‌ی روی قفسه می‌رسد؛ شانه‌هایش پایین می‌آید. کلیدها را برمی‌دارد، فنجان را همان‌جا می‌گذارد و به صبح قدم می‌گذارد.',
+      objects: ['فنجان سرامیکی', 'نور پنجره', 'پشت‌بام', 'کاشی'],
+      colors: [
+        { name: 'کهربایی', hex: '#c98a3b' },
+        { name: 'خاکستری', hex: '#6b7280' },
+        { name: 'کرم', hex: '#efe6d2' },
+      ],
+      demo: true,
+      mode: 'story',
+      model: 'demo',
+    };
+  }
+  return {
+    title: 'The amber hour',
+    story:
+      'The mug has gone cool on the windowsill, but Mira keeps both hands around it anyway. The steam has stopped rising, and the kitchen is still enough to hear the refrigerator ticking. Through the glass, slate rooftops turn the colour of wet paper, and a single amber band of light slides across the cream tiles and stops at her knuckles. She meant to leave ten minutes ago. Instead she watches the light climb the wall until it reaches the chipped cup on the shelf; her shoulders come down. She picks up her keys, leaves the mug where it is, and steps into the morning.',
+    objects: ['ceramic mug', 'window light', 'rooftops', 'tiles'],
+    colors: [
+      { name: 'amber', hex: '#c98a3b' },
+      { name: 'slate', hex: '#6b7280' },
+      { name: 'cream', hex: '#efe6d2' },
+    ],
+    demo: true,
+    mode: 'story',
+    model: 'demo',
+  };
+}
+
+function demoResult(language = 'en', mode = 'haiku') {
+  if (mode === 'story') return demoStoryResult(language);
+  return { ...demoHaikuResult(language), mode: 'haiku' };
+}
+
 function normalizeColor(input) {
   const name = asString(input?.name).slice(0, 24);
   if (!name) return null;
@@ -432,8 +546,8 @@ function normalizeColor(input) {
   return { name, hex };
 }
 
-function normalizePoem(raw, language = 'en') {
-  const fb = fallbackFor(language);
+function normalizePoem(raw, language = 'en', mode = 'haiku') {
+  const fb = fallbackFor(language, mode);
   const r = raw && typeof raw === 'object' ? raw : {};
   const lines = asArray(r.poem)
     .filter((l) => typeof l === 'string' && l.trim())
@@ -450,17 +564,38 @@ function normalizePoem(raw, language = 'en') {
   let title = asString(r.title).trim().slice(0, 60);
   if (/plain words|placeholder|^title$/i.test(title) || /^\d+\s*-\s*\d+$/.test(title)) title = '';
 
+  if (mode === 'story') {
+    // Accept a paragraph from "story" (or, if a model slips, a poem-shaped
+    // array) and flatten it to one paragraph — the brief is a single paragraph.
+    const rawStory =
+      asString(r.story) ||
+      asArray(r.story).join(' ') ||
+      asArray(r.poem).join(' ');
+    let story = rawStory.replace(/\s+/g, ' ').trim().slice(0, 1400);
+    // Reject an echoed schema placeholder, or a reply too short to be a story.
+    if (/^(the\s+)?(one-paragraph\s+)?story\.?$/i.test(story)) story = '';
+    if (story && story.split(/\s+/).length < 20) story = '';
+    return {
+      title: title || fb.title,
+      story: story || fb.story,
+      objects: objects.length ? objects : fb.objects.slice(),
+      colors: colors.length ? colors : fb.colors.map((c) => ({ ...c })),
+      mode: 'story',
+    };
+  }
+
   return {
     title: title || fb.title,
     poem: lines.length ? lines : fb.poem.slice(),
     objects: objects.length ? objects : fb.objects.slice(),
     colors: colors.length ? colors : fb.colors.map((c) => ({ ...c })),
+    mode: 'haiku',
   };
 }
 
 // ---- Vision model --------------------------------------------------------
 // `target` is one entry from AI_TRIES: { provider, base, key, model, thinkOff, maxTokensParam }.
-async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT_MS, language = 'en') {
+async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT_MS, language = 'en', mode = 'haiku') {
   const { base, key } = target;
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
@@ -471,7 +606,7 @@ async function callVisionModel(target, imageDataUrl, timeoutMs = REQUEST_TIMEOUT
       'HTTP-Referer': AI_APP_URL,
       'X-Title': AI_APP_TITLE,
     },
-    body: JSON.stringify(buildProviderRequest(target, imageDataUrl, language)),
+    body: JSON.stringify(buildProviderRequest(target, imageDataUrl, language, mode)),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
@@ -498,9 +633,10 @@ const isDailyQuotaError = (err) =>
 
 const isFatalError = (err) => isFatalProviderError(err?.status) || isDailyQuotaError(err);
 
-async function writePoem(imageDataUrl, language = 'en') {
+async function writePoem(imageDataUrl, language = 'en', mode = 'haiku') {
   const lang = LANGUAGES.has(language) ? language : 'en';
-  if (DEMO) return { ...demoResult(lang), language: lang };
+  const form = MODES.has(mode) ? mode : 'haiku';
+  if (DEMO) return { ...demoResult(lang, form), language: lang };
 
   const tries = AI_TRIES;
   let parsed = null;
@@ -534,7 +670,7 @@ async function writePoem(imageDataUrl, language = 'en') {
 
       let data;
       try {
-        data = await callVisionModel(target, imageDataUrl, Math.min(REQUEST_TIMEOUT_MS, remaining), lang);
+        data = await callVisionModel(target, imageDataUrl, Math.min(REQUEST_TIMEOUT_MS, remaining), lang, form);
       } catch (err) {
         lastErr = err;
         break;
@@ -572,7 +708,7 @@ async function writePoem(imageDataUrl, language = 'en') {
     throw fatalErr;
   }
 
-  const result = normalizePoem(parsed || fallbackFor(lang), lang);
+  const result = normalizePoem(parsed || fallbackFor(lang, form), lang, form);
   result.model = usedModel || 'fallback-verse';
   if (!parsed) result.degraded = true;
   result.language = lang;
@@ -583,7 +719,7 @@ async function writePoem(imageDataUrl, language = 'en') {
       ? ` lastErr=${lastErr.status || ''} ${String(lastErr.detail || lastErr.message || '').slice(0, 120)}`
       : ` unparseable="${rawSample}"`;
   console.log(
-    `[poem] model=${result.model} lang=${result.language} degraded=${Boolean(result.degraded)} ${Date.now() - started}ms${reason}`
+    `[poem] mode=${result.mode} model=${result.model} lang=${result.language} degraded=${Boolean(result.degraded)} ${Date.now() - started}ms${reason}`
   );
   return result;
 }
@@ -596,6 +732,9 @@ const FALLBACK_PULSES = [
   'Shakespearing',
   'Poemising',
   'Versifying',
+  'Story-weaving',
+  'Tale-spinning',
+  'Plot-tending',
   'Colour-gathering',
   'Scene-reading',
   'Light-measuring',
@@ -614,10 +753,10 @@ let pulsePool = FALLBACK_PULSES.slice();
 let pulseGeneratedAt = 0;
 let pulseInFlight = null;
 
-const PULSE_PROMPT = `You invent playful gerund words for the loading screen of an app that turns a photo into a tiny haiku poem.
-Return a JSON array of 20 SHORT, original gerunds (single words or hyphenated), each ending in "-ing", describing the act of truly noticing a scene and turning it into a poem.
-Be witty and varied; mix the poetic (haikoizing, shakespearing, versifying) with the literal (colour-sipping, light-counting, scene-scanning).
-STRICT JSON only — a single array of lowercase strings, no prose, no code fences. Example shape: ["haikoizing","shakespearing","poemising"]`;
+const PULSE_PROMPT = `You invent playful gerund words for the loading screen of an app that turns a photo into a tiny haiku or a one-paragraph short story.
+Return a JSON array of 20 SHORT, original gerunds (single words or hyphenated), each ending in "-ing", describing the act of truly noticing a scene and turning it into a poem or story.
+Be witty and varied; mix the poetic (haikoizing, shakespearing, versifying) with the narrative (story-weaving, tale-spinning, plot-tending) and the literal (colour-sipping, light-counting, scene-scanning).
+STRICT JSON only — a single array of lowercase strings, no prose, no code fences. Example shape: ["haikoizing","story-weaving","poemising"]`;
 
 async function generatePulsePool() {
   const tried = [];
@@ -759,7 +898,7 @@ async function serveStatic(req, res, pathname) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
-  // --- write a poem about the photo ---
+  // --- write a poem or short story about the photo ---
   if (url.pathname === '/api/poem') {
     if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
     if (limitedPoem(clientIp(req))) {
@@ -767,12 +906,13 @@ const server = createServer(async (req, res) => {
     }
     try {
       const body = await readBody(req, MAX_BODY_BYTES);
-      const { image, language } = JSON.parse(body || '{}');
+      const { image, language, mode } = JSON.parse(body || '{}');
       if (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(image)) {
         return sendJson(res, 400, { error: 'Expected a JPEG/PNG/WebP data URL in "image".' });
       }
       const lang = LANGUAGES.has(language) ? language : 'en';
-      return sendJson(res, 200, await writePoem(image, lang));
+      const form = MODES.has(mode) ? mode : 'haiku';
+      return sendJson(res, 200, await writePoem(image, lang, form));
     } catch (err) {
       const status = err?.status && err.status >= 400 && err.status < 600 ? err.status : 500;
       console.error('[poem]', status, err?.message || err);
@@ -799,6 +939,7 @@ const server = createServer(async (req, res) => {
       provider: DEMO ? 'demo' : AI_ENDPOINTS.map((ep) => ep.name).join('+'),
       model: DEMO ? 'demo' : AI_TRIES[0].model,
       models: DEMO ? ['demo'] : AI_MODELS,
+      modes: [...MODES],
       // Handy when a verse comes back marked "fallback verse": which key each
       // model sits behind, and whether its thinking is switched off.
       providers: DEMO
@@ -842,7 +983,7 @@ server.listen(PORT, '0.0.0.0', () => {
   const chain = AI_ENDPOINTS.map(
     (ep) => `${ep.name}: ${ep.models.join(' → ')}`
   ).join('\n              ');
-  const mode = DEMO ? 'DEMO MODE (no API key — canned verse)' : `LIVE — ${chain}`;
+  const mode = DEMO ? 'DEMO MODE (no API key — canned writing)' : `LIVE — ${chain}`;
   console.log(`\n  Haikamera is running.  ${mode}`);
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Phone:   http://<your-computer-LAN-IP>:${PORT}  (same Wi-Fi)\n`);

@@ -4,7 +4,7 @@
 // Network-first: when online we always fetch the latest HTML/JS/CSS, so a stale
 // cached app.js can never run against a newer index.html (that mismatch is what
 // throws "Cannot set properties of null"). The cache is only used offline.
-const CACHE = 'haikamera-shell-v19';
+const CACHE = 'haikamera-shell-v20';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
