@@ -58,6 +58,8 @@ const els = {
 
 const JOURNAL_KEY = 'haikamera.journal.v1';
 const LEGACY_JOURNAL_KEY = 'touchgrass.journal.v4'; // pre-rename key, migrated once
+const JOURNAL_DB = 'haikamera-journal';
+const JOURNAL_PHOTO_STORE = 'photos';
 const LANG_KEY = 'haikamera.lang';
 const MODE_KEY = 'haikamera.mode';
 
@@ -114,7 +116,8 @@ function setMode(mode) {
 }
 
 // Three encodings come out of one captured frame:
-//   display — what you see on screen (and what the journal keeps)
+//   display — what you see on screen (a saved journal entry keeps this in
+//             IndexedDB so it can draw the same share card later)
 //   payload — what the model sees. A poem or story needs the gist of the scene, not a
 //             forensic read, so this is small: it keeps image tokens (and cost,
 //             and latency, and rate-limit pressure) down to a fraction. At 512px
@@ -617,6 +620,7 @@ function copyHex(swatch, label, color) {
 // that wrote it, and the app's address. The colours and objects stay in
 // the app. We draw it here on a canvas so it can travel as one image through
 // the Web Share API; where the browser can't share files, it downloads instead.
+// A result and an entry reopened from the journal share this exact card.
 
 const SHARE_WIDTH = 1080;      // px — a clean size for chat apps and feeds
 const SHARE_PAD = 64;
@@ -855,50 +859,65 @@ async function tryNativeShare(file, caption, title) {
   }
 }
 
-function flashShareButton(text) {
-  const original = 'Share';
-  els.shareBtn.textContent = text;
-  els.shareBtn.disabled = true;
+function flashButton(button, text) {
+  if (!button) return;
+  const original = button.dataset.idleLabel || button.textContent;
+  button.dataset.idleLabel = original;
+  button.textContent = text;
+  button.disabled = true;
   setTimeout(() => {
-    els.shareBtn.textContent = original;
-    els.shareBtn.disabled = false;
+    button.textContent = button.dataset.idleLabel || original;
+    button.disabled = false;
   }, 1600);
+}
+
+// One share path for a fresh result and for anything reopened from the journal.
+// A ready blob takes the quick route, keeping the tap inside the browser's user
+// gesture when the OS share sheet opens. A still-drawing card can wait, then
+// shares (or downloads) as soon as it is ready.
+async function sharePiece({ item, photo, blob = null, promise = null, button = null }) {
+  const filename = shareFilename(item);
+  const caption = shareCaption(item);
+  const title = item.title || 'Haikamera';
+
+  if (blob) {
+    const file = new File([blob], filename, { type: 'image/png' });
+    if (await tryNativeShare(file, caption, title)) return;
+    downloadBlob(blob, filename);
+    flashButton(button, 'Saved ✓');
+    return;
+  }
+
+  let ready = promise ? await promise : null;
+  if (!ready && photo) {
+    try {
+      ready = await composeShareCard(item, photo);
+    } catch {
+      flashButton(button, "Couldn't share");
+      return;
+    }
+  }
+  if (!ready) {
+    flashButton(button, "Couldn't share");
+    return;
+  }
+
+  const file = new File([ready], filename, { type: 'image/png' });
+  if (await tryNativeShare(file, caption, title)) return;
+
+  downloadBlob(ready, filename);
+  flashButton(button, 'Saved ✓');
 }
 
 async function shareResult() {
   if (!lastResult || !lastPhoto) return;
-  const r = lastResult;
-  const caption = shareCaption(r);
-  const title = r.title || 'Haikamera';
-
-  // Fast path: the card is already drawn, so share it without awaiting anything
-  // — that keeps the tap a live user gesture when the share sheet opens.
-  if (shareCardBlob) {
-    const ready = new File([shareCardBlob], shareFilename(r), { type: 'image/png' });
-    if (await tryNativeShare(ready, caption, title)) return;
-    downloadBlob(shareCardBlob, shareFilename(r));
-    flashShareButton('Saved ✓');
-    return;
-  }
-
-  // Still drawing (or file sharing isn't available): wait for the card, then
-  // share it or, failing that, save it — the image, writing and model still reach
-  // the user either way.
-  let blob = (await shareCardPromise) || shareCardBlob;
-  if (!blob) {
-    try {
-      blob = await composeShareCard(r, lastPhoto);
-    } catch {
-      flashShareButton("Couldn't share");
-      return;
-    }
-  }
-
-  const file = new File([blob], shareFilename(r), { type: 'image/png' });
-  if (await tryNativeShare(file, caption, title)) return;
-
-  downloadBlob(blob, shareFilename(r));
-  flashShareButton('Saved ✓');
+  await sharePiece({
+    item: lastResult,
+    photo: lastPhoto,
+    blob: shareCardBlob,
+    promise: shareCardPromise,
+    button: els.shareBtn,
+  });
 }
 
 // ---- Local journal (this device only) ------------------------------------
@@ -919,10 +938,151 @@ function loadJournal() {
 function saveJournal(entries) {
   localStorage.setItem(JOURNAL_KEY, JSON.stringify(entries.slice(0, 100)));
   updateJournalCount();
+  void pruneJournalPhotos(entries.slice(0, 100));
 }
 
 function updateJournalCount() {
   els.journalCount.textContent = String(loadJournal().length);
+}
+
+// A journal entry's title and writing are small enough for localStorage. The
+// photo is not: keep a display-size copy in IndexedDB so an old entry can still
+// make the same share card as a fresh result. Everything stays on this device.
+let journalDbPromise = null;
+
+function openJournalDb() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (journalDbPromise) return journalDbPromise;
+
+  journalDbPromise = new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open(JOURNAL_DB, 1);
+    } catch {
+      resolve(null);
+      return;
+    }
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(JOURNAL_PHOTO_STORE)) {
+        db.createObjectStore(JOURNAL_PHOTO_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+  });
+  return journalDbPromise;
+}
+
+function journalPhotoKey(entry) {
+  return entry?.id || (entry?.at ? `at-${entry.at}` : '');
+}
+
+async function getJournalPhoto(entry) {
+  const key = journalPhotoKey(entry);
+  if (!key) return '';
+  const db = await openJournalDb().catch(() => null);
+  if (!db) return '';
+
+  return new Promise((resolve) => {
+    try {
+      const request = db
+        .transaction(JOURNAL_PHOTO_STORE, 'readonly')
+        .objectStore(JOURNAL_PHOTO_STORE)
+        .get(key);
+      request.onsuccess = () => resolve(typeof request.result === 'string' ? request.result : '');
+      request.onerror = () => resolve('');
+    } catch {
+      resolve('');
+    }
+  });
+}
+
+async function storeJournalPhoto(key, photo) {
+  if (!key || !photo) return false;
+  const db = await openJournalDb().catch(() => null);
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(JOURNAL_PHOTO_STORE, 'readwrite');
+      tx.objectStore(JOURNAL_PHOTO_STORE).put(photo, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+// Drop photo copies for entries trimmed from the journal (and all of them when
+// the journal is cleared), so the browser store cannot grow forever.
+function pruneJournalPhotos(entries) {
+  return openJournalDb()
+    .then((db) => {
+      if (!db) return;
+      const keep = new Set(entries.map(journalPhotoKey).filter(Boolean));
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(JOURNAL_PHOTO_STORE, 'readwrite');
+          const store = tx.objectStore(JOURNAL_PHOTO_STORE);
+          if (typeof store.getAllKeys !== 'function') {
+            resolve();
+            return;
+          }
+          const keys = store.getAllKeys();
+          keys.onsuccess = () => {
+            keys.result.forEach((key) => {
+              if (!keep.has(key)) store.delete(key);
+            });
+          };
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
+        } catch {
+          resolve();
+        }
+      });
+    })
+    .catch(() => {});
+}
+
+function newJournalId() {
+  return `j-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Preparing a journal card when its entry opens keeps the eventual Share tap a
+// live gesture on phones that require one before opening the OS share sheet.
+const journalShareCards = new WeakMap();
+
+function prepareJournalShare(entry, details) {
+  const existing = journalShareCards.get(details);
+  if (existing) return existing;
+
+  const item = { ...entry, poem: entry.lines || [] };
+  const state = { item, blob: null, promise: null };
+  state.promise = (async () => {
+    const photo = (await getJournalPhoto(entry)) || entry.thumb || '';
+    if (!photo) throw new Error('This entry has no photo to share.');
+    const blob = await composeShareCard(item, photo);
+    state.blob = blob;
+    return blob;
+  })().catch(() => null);
+
+  journalShareCards.set(details, state);
+  return state;
+}
+
+function shareJournalEntry(entry, details, button) {
+  const state = prepareJournalShare(entry, details);
+  void sharePiece({
+    item: state.item,
+    blob: state.blob,
+    promise: state.promise,
+    button,
+  });
 }
 
 function addToJournal() {
@@ -930,7 +1090,8 @@ function addToJournal() {
   const entries = loadJournal();
   // Keep everything the model told us, not just the writing: which model wrote
   // it, whether it was a real one or a fallback, and the things it named.
-  entries.unshift({
+  const entry = {
+    id: newJournalId(),
     title: lastResult.title,
     mode: lastResult.mode || 'haiku',
     lines: lastResult.poem || [],
@@ -943,8 +1104,10 @@ function addToJournal() {
     colors: lastResult.colors || [],
     thumb: lastThumb,
     at: Date.now(),
-  });
+  };
+  entries.unshift(entry);
   saveJournal(entries);
+  void storeJournalPhoto(entry.id, lastPhoto);
 
   els.saveBtn.textContent = 'Saved ✓';
   els.saveBtn.disabled = true;
@@ -1117,7 +1280,25 @@ function journalItem(e) {
   saved.className = 'j-when';
   saved.textContent =
     'Saved ' + when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  body.appendChild(saved);
+
+  const foot = document.createElement('div');
+  foot.className = 'j-foot';
+  foot.appendChild(saved);
+
+  const share = document.createElement('button');
+  share.type = 'button';
+  share.className = 'ghost-btn j-share';
+  share.textContent = 'Share';
+  share.setAttribute('aria-label', `Share ${e.title || 'this entry'}`);
+  share.addEventListener('click', () => shareJournalEntry(e, details, share));
+  foot.appendChild(share);
+  body.appendChild(foot);
+
+  // Draw this entry's share card as soon as it opens, so a quick Share tap can
+  // still open the native sheet within the browser's user gesture.
+  details.addEventListener('toggle', () => {
+    if (details.open) prepareJournalShare(e, details);
+  });
 
   details.appendChild(body);
   li.appendChild(details);
