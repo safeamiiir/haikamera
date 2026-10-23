@@ -1,7 +1,7 @@
 {
   "name": "Haikamera",
   "short_name": "Haikamera",
-  "description": "Point your phone at anything and get a tiny poem about it. No app, no login, no data collection.",
+  "description": "Point your phone at anything and get a tiny poem or one-paragraph story about it. No app, no login, no data collection.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

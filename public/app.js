@@ -3,8 +3,8 @@
 // Flow: tap "Snap a poem" -> a small menu: take a photo (camera) or upload one
 // -> the frame is downscaled and re-encoded on the device (this strips
 // EXIF/GPS) -> our server asks a free, open-weight vision model to read the
-// scene's colours and objects and write a short haiku -> we show YOUR photo
-// with the poem. We never invent or fetch another image.
+// scene's colours and objects and write a short haiku or story -> we show YOUR
+// photo with the writing. We never invent or fetch another image.
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,11 +53,15 @@ const els = {
   offlineBanner: $('offlineBanner'),
   privacyLine: $('privacyLine'),
   langSelect: $('langSelect'),
+  modeNoun: $('modeNoun'),
+  modeBlurb: $('modeBlurb'),
+  startLabel: $('startLabel'),
 };
 
 const JOURNAL_KEY = 'haikamera.journal.v1';
 const LEGACY_JOURNAL_KEY = 'touchgrass.journal.v4'; // pre-rename key, migrated once
 const LANG_KEY = 'haikamera.lang';
+const MODE_KEY = 'haikamera.mode';
 
 // Languages the server can write a poem in, and which of them read
 // right-to-left. Only the poem flips direction — the rest of the UI is English
@@ -82,9 +86,44 @@ function setLang(lang) {
   if (els.langSelect) els.langSelect.value = next;
 }
 
+// ---- What the model writes: a haiku or a one-paragraph short story --------
+const MODES = new Set(['haiku', 'story']);
+
+function getMode() {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'story' ? 'story' : 'haiku';
+  } catch {
+    return 'haiku';
+  }
+}
+
+function setMode(mode) {
+  const next = MODES.has(mode) ? mode : 'haiku';
+  try {
+    localStorage.setItem(MODE_KEY, next);
+  } catch {
+    /* private mode — the choice just won't persist */
+  }
+
+  const isStory = next === 'story';
+  if (els.modeNoun) els.modeNoun.textContent = isStory ? 'story' : 'poem';
+  if (els.modeBlurb) {
+    els.modeBlurb.textContent = isStory
+      ? 'A short story in one paragraph, grown from what is actually there.'
+      : 'Point at anything — your desk, a window, a trail.';
+  }
+  if (els.startLabel) els.startLabel.textContent = isStory ? 'Snap a story' : 'Snap a poem';
+
+  document.querySelectorAll('.mode-option').forEach((btn) => {
+    const active = btn.dataset.mode === next;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
 // Three encodings come out of one captured frame:
 //   display — what you see on screen (and what the journal keeps)
-//   payload — what the model sees. A poem needs the gist of the scene, not a
+//   payload — what the model sees. A poem or story needs the gist of the scene, not a
 //             forensic read, so this is small: it keeps image tokens (and cost,
 //             and latency, and rate-limit pressure) down to a fraction. At 512px
 //             a typical frame is ~330 image tokens.
@@ -109,11 +148,29 @@ const FALLBACK_PULSES = [
   'Metre-counting',
   'Pondering',
 ];
-let pulsePool = FALLBACK_PULSES.slice();
+const STORY_PULSES = [
+  'Story-weaving',
+  'Tale-spinning',
+  'Plot-tending',
+  'Character-finding',
+  'Scene-setting',
+  'Colour-gathering',
+  'Light-measuring',
+  'Noticing',
+  'Pondering',
+];
+// The server invents a fresh mixed batch; until it arrives (or if it fails),
+// use the list that matches the form the reader chose.
+let pulsePool = [];
 let pulseTimer = null;
 
 function pickPulse() {
-  const w = pulsePool[Math.floor(Math.random() * pulsePool.length)] || 'Pondering';
+  const pool = pulsePool.length
+    ? pulsePool
+    : getMode() === 'story'
+      ? STORY_PULSES
+      : FALLBACK_PULSES;
+  const w = pool[Math.floor(Math.random() * pool.length)] || 'Pondering';
   return w.charAt(0).toUpperCase() + w.slice(1) + '…';
 }
 
@@ -415,7 +472,7 @@ async function identify({ display, payload, thumb }) {
     const res = await fetch('/api/poem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: payload, language: getLang() }),
+      body: JSON.stringify({ image: payload, language: getLang(), mode: getMode() }),
     });
 
     if (!res.ok) {
@@ -437,20 +494,20 @@ async function identify({ display, payload, thumb }) {
 }
 
 // ---- Render --------------------------------------------------------------
-// What wrote a poem, described two ways. `modelShort` names it for tight spots
+// What wrote a piece, described two ways. `modelShort` names it for tight spots
 // ("google/gemma-4-31b-it:free" -> "gemma-4-31b-it"); `modelFull` is the exact
 // id for attribution. Both work on a live result and on a saved journal entry,
 // since each carries `model`, `degraded` and `demo`.
 function modelShort(r) {
   if (!r) return '';
   if (r.demo) return 'demo sample';
-  if (r.degraded) return 'fallback verse';
+  if (r.degraded) return r.mode === 'story' ? 'fallback story' : 'fallback verse';
   return r.model ? String(r.model).split('/').pop().replace(/:free$/, '') : '';
 }
 function modelFull(r) {
   if (!r) return '';
   if (r.demo) return 'demo sample';
-  if (r.degraded) return 'fallback verse';
+  if (r.degraded) return r.mode === 'story' ? 'fallback story' : 'fallback verse';
   return r.model ? String(r.model) : '';
 }
 
@@ -459,23 +516,33 @@ function renderResult(r, photo) {
 
   els.sceneImg.src = photo;
 
-  // The poem carries its own direction: a Persian poem reads right-to-left
-  // even though the page around it is English and LTR.
+  // The writing carries its own direction: a Persian poem or story reads
+  // right-to-left even though the page around it is English and LTR.
   const rtl = RTL_LANGS.has(r.language);
+  const storyMode = r.mode === 'story';
+  const isStory = storyMode && !!r.story;
   els.poemTitle.dir = rtl ? 'rtl' : 'ltr';
   els.poemTitle.lang = rtl ? 'fa' : '';
   els.poemLines.dir = rtl ? 'rtl' : 'ltr';
   els.poemLines.lang = rtl ? 'fa' : '';
+  els.poemLines.classList.toggle('story', storyMode);
 
   els.poemTitle.textContent = r.title || '';
 
   els.poemLines.innerHTML = '';
-  (r.poem || []).forEach((line) => {
+  if (isStory) {
     const p = document.createElement('p');
-    p.className = 'poem-line';
-    p.textContent = line;
+    p.className = 'story-text';
+    p.textContent = r.story;
     els.poemLines.appendChild(p);
-  });
+  } else {
+    (r.poem || []).forEach((line) => {
+      const p = document.createElement('p');
+      p.className = 'poem-line';
+      p.textContent = line;
+      els.poemLines.appendChild(p);
+    });
+  }
 
   // "See how this was made": the model that read the frame, behind the
   // disclosure. A demo or fallback poem has no model to name, so the state
@@ -487,7 +554,8 @@ function renderResult(r, photo) {
   els.makerRow.classList.toggle('hidden', !makerText);
 
   // A tiny badge on the summary so state is clear even when collapsed.
-  const badgeText = r.demo ? 'demo' : r.degraded ? 'fallback verse' : '';
+  const fallbackLabel = storyMode ? 'fallback story' : 'fallback verse';
+  const badgeText = r.demo ? 'demo' : r.degraded ? fallbackLabel : '';
   els.howBadge.textContent = badgeText;
   els.howBadge.classList.toggle('hidden', !badgeText);
 
@@ -552,8 +620,8 @@ function copyHex(swatch, label, color) {
   }
 }
 
-// ---- Share: the photo, the poem, the model, and where to find the app -----
-// The share card carries the photo, the poem it earned, the name of the model
+// ---- Share: the photo, the writing, the model, and where to find the app --
+// The share card carries the photo, the poem or story it earned, the model
 // that wrote it, and the app's address. The colours and objects stay in
 // the app. We draw it here on a canvas so it can travel as one image through
 // the Web Share API; where the browser can't share files, it downloads instead.
@@ -637,8 +705,13 @@ async function composeShareCard(r, photo) {
     sy = Math.round((img.naturalHeight - sh) / 2);
   }
 
+  // A haiku sets like verse; a short story sets like prose, in a smaller face
+  // with more generous leading so one paragraph still reads comfortably.
+  const isStory = r.mode === 'story' && !!r.story;
   const titleFont = rtl ? `26px ${SHARE_PERSIAN}` : `600 25px ${SHARE_SANS}`;
-  const poemFont = rtl ? `50px ${SHARE_PERSIAN}` : `50px ${SHARE_SERIF}`;
+  const haikuFont = rtl ? `50px ${SHARE_PERSIAN}` : `50px ${SHARE_SERIF}`;
+  const storyFont = rtl ? `34px ${SHARE_PERSIAN}` : `34px ${SHARE_SERIF}`;
+  const bodyFont = isStory ? storyFont : haikuFont;
   const modelFont = `24px ${SHARE_SANS}`;
   const brandFont = `600 24px ${SHARE_SANS}`;
 
@@ -648,24 +721,29 @@ async function composeShareCard(r, photo) {
   const title = (r.title || '').trim();
   const titleLines = title ? wrapText(measure, rtl ? title : title.toUpperCase(), contentW) : [];
 
-  measure.font = poemFont;
-  const poemLines = [];
-  for (const line of (r.poem || []).slice(0, 3)) {
-    poemLines.push(...wrapText(measure, line, contentW));
+  measure.font = bodyFont;
+  const bodyLines = [];
+  if (isStory) {
+    bodyLines.push(...wrapText(measure, r.story, contentW));
+  } else {
+    for (const line of (r.poem || []).slice(0, 3)) {
+      bodyLines.push(...wrapText(measure, line, contentW));
+    }
   }
-  if (!poemLines.length) poemLines.push('');
+  if (!bodyLines.length) bodyLines.push('');
 
   const titleLH = 40;
-  const poemLH = 76;
+  const bodyLH = isStory ? 52 : 76;
+  const baselineGap = isStory ? 12 : 16;
   const topGap = 56;        // photo -> title
-  const titleGap = 30;      // title -> poem
-  const footerGap = 56;     // poem -> footer
+  const titleGap = 30;      // title -> body
+  const footerGap = 56;     // body -> footer
   const footerLH = 44;      // footer line height
   const bottom = 56;
 
   const titleBlock = titleLines.length * titleLH;
-  const poemBlock = poemLines.length * poemLH;
-  const H = photoH + topGap + titleBlock + (titleLines.length ? titleGap : 0) + poemBlock + footerGap + footerLH + bottom;
+  const bodyBlock = bodyLines.length * bodyLH;
+  const H = photoH + topGap + titleBlock + (titleLines.length ? titleGap : 0) + bodyBlock + footerGap + footerLH + bottom;
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
@@ -697,14 +775,14 @@ async function composeShareCard(r, photo) {
     cursor += titleBlock + titleGap;
   }
 
-  ctx.font = poemFont;
+  ctx.font = bodyFont;
   ctx.fillStyle = SHARE_INK;
   ctx.direction = rtl ? 'rtl' : 'ltr';
   ctx.textAlign = rtl ? 'right' : 'left';
-  for (let i = 0; i < poemLines.length; i += 1) {
-    ctx.fillText(poemLines[i], anchorX, cursor + (i + 1) * poemLH - 16);
+  for (let i = 0; i < bodyLines.length; i += 1) {
+    ctx.fillText(bodyLines[i], anchorX, cursor + (i + 1) * bodyLH - baselineGap);
   }
-  cursor += poemBlock;
+  cursor += bodyBlock;
 
   // Footer: the model that wrote it on the left, the app's address on the right.
   // Model ids and URLs are Latin, so the footer stays LTR under a Persian poem.
@@ -741,7 +819,8 @@ function shareFilename(r) {
 
 // The caption that travels with the image where the platform supports text.
 function shareCaption(r) {
-  const lines = [r.title, ...(r.poem || [])].filter(Boolean);
+  const body = r.mode === 'story' && r.story ? [r.story] : r.poem || [];
+  const lines = [r.title, ...body].filter(Boolean);
   const maker = modelFull(r);
   return [lines.join('\n'), maker ? `— ${maker}` : '', `Haikamera 🪷📸\n${APP_HOME_URL}`]
     .filter(Boolean)
@@ -811,7 +890,7 @@ async function shareResult() {
   }
 
   // Still drawing (or file sharing isn't available): wait for the card, then
-  // share it or, failing that, save it — the image, poem and model still reach
+  // share it or, failing that, save it — the image, writing and model still reach
   // the user either way.
   let blob = (await shareCardPromise) || shareCardBlob;
   if (!blob) {
@@ -857,11 +936,13 @@ function updateJournalCount() {
 function addToJournal() {
   if (!lastResult) return;
   const entries = loadJournal();
-  // Keep everything the model told us, not just the verse: which model wrote
+  // Keep everything the model told us, not just the writing: which model wrote
   // it, whether it was a real one or a fallback, and the things it named.
   entries.unshift({
     title: lastResult.title,
+    mode: lastResult.mode || 'haiku',
     lines: lastResult.poem || [],
+    story: lastResult.story || '',
     model: lastResult.model || '',
     language: lastResult.language || getLang(),
     degraded: !!lastResult.degraded,
@@ -884,7 +965,7 @@ function renderJournal() {
   if (!entries.length) {
     const li = document.createElement('li');
     li.className = 'journal-empty';
-    li.textContent = 'No poems yet. Point at something and snap one.';
+    li.textContent = 'No poems or stories yet. Point at something and snap one.';
     els.journalList.appendChild(li);
     return;
   }
@@ -892,11 +973,12 @@ function renderJournal() {
   entries.forEach((e) => els.journalList.appendChild(journalItem(e)));
 }
 
-// One journal entry: a collapsed summary (thumbnail + title + first line +
-// model/date) that expands to the full poem, the things and colours it
-// saw, the model that wrote it, and when it was saved.
+// One journal entry: a collapsed summary (thumbnail + title + first line or
+// story opening + form/model/date) that expands to the full poem or story, the
+// things and colours it saw, the model that wrote it, and when it was saved.
 function journalItem(e) {
   const when = new Date(e.at);
+  const isStory = e.mode === 'story' && !!e.story;
   const lines = e.lines || [];
   const objects = e.objects || [];
   const colors = e.colors || [];
@@ -926,8 +1008,8 @@ function journalItem(e) {
 
   const tagline = document.createElement('p');
   tagline.className = 'j-tagline';
-  tagline.textContent = lines[0] || '';
-  if (lines.length > 1) {
+  tagline.textContent = isStory ? e.story : lines[0] || '';
+  if (!isStory && lines.length > 1) {
     const more = document.createElement('span');
     more.className = 'j-more';
     more.textContent = ` +${lines.length - 1} more line${lines.length > 2 ? 's' : ''}`;
@@ -937,6 +1019,7 @@ function journalItem(e) {
   const meta = document.createElement('p');
   meta.className = 'j-meta';
   meta.textContent = [
+    isStory ? 'short story' : 'haiku',
     modelShort(e), // the model that wrote it, or why it is a demo/fallback
     when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   ]
@@ -960,17 +1043,24 @@ function journalItem(e) {
 
   const poem = document.createElement('div');
   poem.className = 'j-poem';
-  // A saved Persian poem keeps reading right-to-left.
+  // A saved Persian poem or story keeps reading right-to-left.
   if (RTL_LANGS.has(e.language)) {
     poem.dir = 'rtl';
     poem.lang = 'fa';
   }
-  lines.forEach((line) => {
+  if (isStory) {
     const p = document.createElement('p');
-    p.className = 'poem-line';
-    p.textContent = line;
+    p.className = 'j-story';
+    p.textContent = e.story;
     poem.appendChild(p);
-  });
+  } else {
+    lines.forEach((line) => {
+      const p = document.createElement('p');
+      p.className = 'poem-line';
+      p.textContent = line;
+      poem.appendChild(p);
+    });
+  }
   body.appendChild(poem);
 
   if (objects.length) {
@@ -1090,6 +1180,9 @@ els.shareBtn.addEventListener('click', shareResult);
 if (els.langSelect) {
   els.langSelect.addEventListener('change', (e) => setLang(e.target.value));
 }
+document.querySelectorAll('.mode-option').forEach((btn) => {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+});
 
 els.journalBtn.addEventListener('click', () => {
   renderJournal();
@@ -1111,17 +1204,18 @@ window.addEventListener('offline', updateOnline);
 // ---- Boot ----------------------------------------------------------------
 updateJournalCount();
 updateOnline();
-setLang(getLang()); // restore the chosen poem language
+setLang(getLang()); // restore the chosen language
+setMode(getMode()); // restore haiku or short story
 show('stage');
 refreshPulses(); // pull playful AI-made loading words
 
-// Surface demo mode so nobody is confused by the sample verse.
+// Surface demo mode so nobody is confused by the sample writing.
 fetch('/api/health')
   .then((r) => r.json())
   .then((h) => {
     if (h.demo) {
       els.privacyLine.textContent =
-        'Demo mode — here is a sample poem. No account, no cookies, nothing about you.';
+        'Demo mode — here is a sample poem or story. No account, no cookies, nothing about you.';
     }
   })
   .catch(() => {});
