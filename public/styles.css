@@ -610,6 +610,43 @@ html, body {
 /* "Another scene" leads on its own row; "Save" and "Share" sit side by side. */
 .result-actions > #againBtn { flex-basis: 100%; }
 
+/* ---- transient share/caption toast ---- */
+.toast {
+  position: fixed;
+  top: auto;
+  right: auto;
+  left: 50%;
+  bottom: calc(18px + var(--sab, 0px));
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(460px, calc(100vw - 24px));
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.toast-action {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  padding: 2px 0;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.toast-action:disabled { opacity: 0.55; cursor: default; }
+
 /* ---- live camera (desktop / Mac webcam) ---- */
 .camera-view {
   flex: 1;

@@ -78,6 +78,8 @@ A switch beside the shutter chooses the form — **Haiku** or **Short story** �
 6. You get **your own photo**, the poem or story beneath it, and a **"See how this was made"** disclosure with the model that wrote it, tappable colour swatches (tap to copy the hex), and the objects as chips. Save it to your on-device field journal — or hit **Share** and a card with the photo, the writing, the model and the app's address is handed to your phone's share sheet (or saved as a PNG on browsers that can't share files). Saved entries can be opened later and shared again from the journal.
 7. Then go look at the real thing.
 
+**A note on captions.** WhatsApp shows the caption attached to the shared image. Telegram's share extension is less reliable: some versions drop the text from a web share, even though the image arrives. Haikamera keeps the caption within the 1024-character photo-caption limit and copies it to the clipboard when you tap Share, so it is ready to paste into the chat if Telegram leaves it out. The card itself always carries the writing, so the post still reads even if the caption goes missing.
+
 The model is prompted to ground every line in what is *actually visible* — real objects, real colours — to keep it calm and family-friendly, and to **never refuse**: if the photo is unclear it still answers, describing the colours and shapes it can honestly see. If JSON parsing ever fails, the server falls back to a guaranteed verse or story, honestly labelled *fallback verse* / *fallback story*.
 
 ### Haiku or short story

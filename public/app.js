@@ -54,6 +54,7 @@ const els = {
   privacyLine: $('privacyLine'),
   langSelect: $('langSelect'),
   startLabel: $('startLabel'),
+  toast: $('toast'),
 };
 
 const JOURNAL_KEY = 'haikamera.journal.v1';
@@ -635,8 +636,17 @@ const SHARE_ACCENT = '#e2703a';
 const APP_HOME = 'haikamera.onrender.com';
 const APP_HOME_URL = `https://${APP_HOME}`;
 
+// Telegram and WhatsApp both cap a photo caption at 1024 characters. Keep the
+// text inside that limit so a long story still travels as a caption instead of
+// being dropped or split into a second message.
+const CAPTION_LIMIT = 1024;
+
 let shareCardBlob = null;      // ready-to-share PNG, drawn after each result
 let shareCardPromise = null;
+let toastTimer = null;
+let toastRemaining = 0;
+let toastDeadline = 0;
+let captionTipShown = false;
 
 // Canvas can't take a font stack with quotes in the same way CSS can, but a
 // plain comma list works. Persian needs an Arabic-script face, so keep the same
@@ -814,13 +824,23 @@ function shareFilename(r) {
 }
 
 // The caption that travels with the image where the platform supports text.
+// Keep the attribution and the app address intact, and shorten the writing if a
+// very long story would otherwise push the caption past a chat app's limit.
 function shareCaption(r) {
   const body = r.mode === 'story' && r.story ? [r.story] : r.poem || [];
-  const lines = [r.title, ...body].filter(Boolean);
+  const head = [r.title, ...body].filter(Boolean).join('\n');
   const maker = modelFull(r);
-  return [lines.join('\n'), maker ? `— ${maker}` : '', `Haikamera 🪷📸\n${APP_HOME_URL}`]
+  const footer = [maker ? `— ${maker}` : '', `Haikamera 🪷📸\n${APP_HOME_URL}`]
     .filter(Boolean)
     .join('\n\n');
+  const gap = head && footer ? '\n\n' : '';
+  const room = CAPTION_LIMIT - footer.length - gap.length;
+  let text = head;
+  if (text.length > room) {
+    text = text.slice(0, Math.max(0, room - 1)).trimEnd();
+    if (text) text += '…';
+  }
+  return [text, footer].filter(Boolean).join('\n\n').slice(0, CAPTION_LIMIT);
 }
 
 function resetShareCard(r, photo) {
@@ -844,17 +864,230 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// Ask the OS share sheet to take our file. Returns true when sharing either
-// happened or was deliberately cancelled; false means "no file sharing here",
-// so the caller should download instead.
+// Copy without waiting: this stays inside the tap that opened the share sheet.
+// It is the safety net for targets such as Telegram that can drop the text from
+// a file share even though WhatsApp shows it as the image caption.
+function copyTextNow(text) {
+  if (!text) return false;
+  const previous = document.activeElement;
+  let area;
+  try {
+    area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.setAttribute('aria-hidden', 'true');
+    area.style.position = 'fixed';
+    area.style.top = '-1000px';
+    area.style.left = '0';
+    area.style.width = '1px';
+    area.style.height = '1px';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    if (typeof area.setSelectionRange === 'function') {
+      area.setSelectionRange(0, area.value.length);
+    }
+    const copied =
+      typeof document.execCommand === 'function' && document.execCommand('copy');
+    area.remove?.();
+    previous?.focus?.();
+    return !!copied;
+  } catch {
+    area?.remove?.();
+    return false;
+  }
+}
+
+// Clipboard API for an explicit "Copy" tap, with the same synchronous fallback.
+async function copyText(text) {
+  if (!text) return false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through to execCommand */
+    }
+  }
+  return copyTextNow(text);
+}
+
+// Fixed elements track the layout viewport, which on a phone can be taller
+// than the part you can actually see (the browser chrome overlays the rest).
+// Anchor the toast to the visual viewport so its action never hides below the
+// screen, and keep it clear of the home-indicator safe area.
+function positionToast() {
+  const toast = els.toast;
+  if (!toast || toast.classList.contains('hidden')) return;
+
+  const safe = parseFloat(getComputedStyle(toast).getPropertyValue('--sab')) || 0;
+  const gap = 18 + safe;
+  const viewport = window.visualViewport;
+  if (!viewport) {
+    toast.style.bottom = `${gap}px`;
+    return;
+  }
+
+  const chromeOffset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+  toast.style.bottom = `${gap + chromeOffset}px`;
+  if (viewport.width) {
+    toast.style.left = `${viewport.offsetLeft + viewport.width / 2}px`;
+    toast.style.maxWidth = `${Math.min(460, Math.max(160, viewport.width - 24))}px`;
+  }
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', positionToast);
+  window.visualViewport.addEventListener('scroll', positionToast);
+}
+window.addEventListener('resize', positionToast);
+
+function openToast() {
+  const toast = els.toast;
+  if (!toast) return;
+
+  // Show the toast inside the journal dialog while it is open. A modal <dialog>
+  // owns the top layer, so a toast left in <body> would sit behind its backdrop.
+  const host = els.journalDialog?.open ? els.journalDialog : document.body;
+  if (toast.parentElement !== host) host.appendChild(toast);
+  toast.classList.remove('hidden');
+  positionToast();
+}
+
+function stopToastTimer() {
+  if (!toastTimer) return;
+  clearTimeout(toastTimer);
+  toastTimer = null;
+}
+
+function scheduleToastHide(duration) {
+  stopToastTimer();
+  toastRemaining = duration;
+  toastDeadline = 0;
+  // The share sheet may hand us to another app. Do not burn the toast's short
+  // life while the page is in the background — start the clock on return.
+  if (document.visibilityState !== 'visible') return;
+  toastDeadline = Date.now() + duration;
+  toastTimer = setTimeout(hideToast, duration);
+}
+
+function pauseToastTimer() {
+  if (!toastTimer) return;
+  stopToastTimer();
+  toastRemaining = Math.max(0, toastDeadline - Date.now());
+  if (!toastRemaining) hideToast();
+}
+
+function resumeToastTimer() {
+  if (!toastRemaining || toastTimer) return;
+  toastDeadline = Date.now() + toastRemaining;
+  toastTimer = setTimeout(hideToast, toastRemaining);
+}
+
+function hideToast() {
+  const toast = els.toast;
+  if (!toast) return;
+  stopToastTimer();
+  toastRemaining = 0;
+  toastDeadline = 0;
+  toast.classList.add('hidden');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    positionToast();
+    resumeToastTimer();
+  } else {
+    pauseToastTimer();
+  }
+});
+
+function showToast(message, { actionLabel = '', onAction = null, duration = 6500 } = {}) {
+  const toast = els.toast;
+  if (!toast) return;
+
+  stopToastTimer();
+  toastRemaining = 0;
+  toastDeadline = 0;
+  toast.innerHTML = '';
+
+  const messageEl = document.createElement('span');
+  messageEl.textContent = message;
+  toast.appendChild(messageEl);
+
+  if (actionLabel && onAction) {
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'toast-action';
+    action.textContent = actionLabel;
+    action.addEventListener('click', async () => {
+      stopToastTimer();
+      toastRemaining = 0;
+      toastDeadline = 0;
+      action.disabled = true;
+      const copied = await onAction();
+      if (copied) {
+        messageEl.textContent = 'Caption copied ✓';
+        action.remove?.();
+        scheduleToastHide(2200);
+      } else {
+        action.disabled = false;
+        messageEl.textContent = 'Could not copy. Try again.';
+        scheduleToastHide(4000);
+      }
+    });
+    toast.appendChild(action);
+  }
+
+  openToast();
+  scheduleToastHide(duration);
+}
+
+// Telegram can ignore the text that rides with a shared image, so a copy is
+// already waiting on the clipboard when the share sheet closes. Explain that
+// once, and leave a Copy button for browsers where the automatic copy is
+// blocked (or for anyone who dismissed the toast too quickly).
+function showCaptionTip(caption, copied, saved) {
+  if (!caption) return;
+  if (copied && captionTipShown) return;
+  if (copied) captionTipShown = true;
+
+  const message = copied
+    ? saved
+      ? 'Image saved. Caption copied too.'
+      : 'Shared. If the caption is missing, it is on your clipboard.'
+    : saved
+      ? 'Image saved. You can copy the caption.'
+      : 'Shared. If the caption is missing, copy it here.';
+
+  showToast(message, {
+    actionLabel: copied ? 'Copy again' : 'Copy caption',
+    onAction: () => copyText(caption),
+    duration: copied ? 6000 : 9000,
+  });
+}
+
+// Ask the OS share sheet to take our file. 'shared' means the sheet finished,
+// 'cancelled' means the user dismissed it, and false means file sharing is not
+// available here, so the caller should download instead.
 async function tryNativeShare(file, caption, title) {
-  if (!navigator.share || !file || !navigator.canShare?.({ files: [file] })) return false;
+  if (!navigator.share || !file) return false;
+
+  let canShareFiles = false;
+  try {
+    canShareFiles = !!navigator.canShare?.({ files: [file] });
+  } catch {
+    canShareFiles = false;
+  }
+  if (!canShareFiles) return false;
+
   try {
     await navigator.share({ files: [file], text: caption, title });
-    return true;
+    return 'shared';
   } catch (err) {
     // The user dismissed the sheet — that's a finished action, not a failure.
-    if (err?.name === 'AbortError') return true;
+    if (err?.name === 'AbortError') return 'cancelled';
     return false;
   }
 }
@@ -879,12 +1112,19 @@ async function sharePiece({ item, photo, blob = null, promise = null, button = n
   const filename = shareFilename(item);
   const caption = shareCaption(item);
   const title = item.title || 'Haikamera';
+  // Do this before the first await, while the tap still counts as a gesture.
+  const captionCopied = copyTextNow(caption);
 
   if (blob) {
     const file = new File([blob], filename, { type: 'image/png' });
-    if (await tryNativeShare(file, caption, title)) return;
+    const result = await tryNativeShare(file, caption, title);
+    if (result) {
+      if (result === 'shared') showCaptionTip(caption, captionCopied, false);
+      return;
+    }
     downloadBlob(blob, filename);
     flashButton(button, 'Saved ✓');
+    showCaptionTip(caption, captionCopied, true);
     return;
   }
 
@@ -903,10 +1143,15 @@ async function sharePiece({ item, photo, blob = null, promise = null, button = n
   }
 
   const file = new File([ready], filename, { type: 'image/png' });
-  if (await tryNativeShare(file, caption, title)) return;
+  const result = await tryNativeShare(file, caption, title);
+  if (result) {
+    if (result === 'shared') showCaptionTip(caption, captionCopied, false);
+    return;
+  }
 
   downloadBlob(ready, filename);
   flashButton(button, 'Saved ✓');
+  showCaptionTip(caption, captionCopied, true);
 }
 
 async function shareResult() {
